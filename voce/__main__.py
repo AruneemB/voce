@@ -2,6 +2,7 @@
 
 
 def main() -> None:
+    """Start Voce. Prints a setup reminder until the server is fully wired."""
     print("Voce is not yet configured.")
 
 
