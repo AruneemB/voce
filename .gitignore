@@ -7,6 +7,12 @@
 docs-voce/
 
 .env
+.env.*
+.env.local
+.env.development
+.env.test
+.env.production
+*.env
 data/*.db
 data/audio_cache/
 __pycache__/
