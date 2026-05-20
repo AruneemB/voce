@@ -1,0 +1,7 @@
+# Tool/editor directories
+.history/
+.specstory/
+.cursorindexingignore
+
+# Project docs (non-source)
+docs-voce/
