@@ -6,20 +6,25 @@
 # Project docs (non-source)
 docs-voce/
 
+# Environment variables
 .env
 .env.*
-.env.local
-.env.development
-.env.test
-.env.production
 *.env
+
+# Data
 data/*.db
 data/audio_cache/
+
+# Python
 __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
+
+# Build & packaging
 dist/
 *.egg-info/
+
+# Virtual environments
 .venv/
 venv/
