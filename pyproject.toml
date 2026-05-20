@@ -19,6 +19,9 @@ dependencies = [
 [project.scripts]
 voce = "voce.__main__:main"
 
+[tool.setuptools.packages.find]
+include = ["voce*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
