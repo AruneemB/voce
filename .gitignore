@@ -5,3 +5,15 @@
 
 # Project docs (non-source)
 docs-voce/
+
+.env
+data/*.db
+data/audio_cache/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+dist/
+*.egg-info/
+.venv/
+venv/
