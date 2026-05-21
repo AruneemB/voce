@@ -358,6 +358,28 @@ def test_fetch_article_html_500_raises(mock_client):
         fetch_article_html("https://example.com/500", mock_client)
 
 
+def test_fetch_article_html_connect_error_raises(mock_client):
+    mock_client.get.side_effect = httpx.ConnectError("connection refused")
+
+    with pytest.raises(ArticleFetchError) as exc_info:
+        fetch_article_html("https://example.com/article", mock_client)
+    assert exc_info.value.url == "https://example.com/article"
+
+
+def test_fetch_article_html_read_error_raises(mock_client):
+    mock_client.get.side_effect = httpx.ReadError("connection reset")
+
+    with pytest.raises(ArticleFetchError):
+        fetch_article_html("https://example.com/article", mock_client)
+
+
+def test_enrich_article_returns_false_on_connect_error(article_row, mock_client):
+    mock_client.get.side_effect = httpx.ConnectError("refused")
+
+    ok = enrich_article("art001", "https://example.com/", "", article_row, mock_client)
+    assert ok is False
+
+
 # ---------------------------------------------------------------------------
 # enrich_article
 # ---------------------------------------------------------------------------
