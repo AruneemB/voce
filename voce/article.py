@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import re
 
+import httpx
+
+from voce.exceptions import ArticleFetchError
+
 _LATEX_SUBS: list[tuple[str, str]] = [
     (r"\\frac\{([^}]+)\}\{([^}]+)\}", r"\1 over \2"),
     (r"\\sqrt\{([^}]+)\}", r"the square root of \1"),
@@ -101,3 +105,25 @@ def clean_html_for_tts(html: str) -> str:
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = re.sub(r"[ \t]+", " ", text)
     return text.strip()
+
+
+_FETCH_HEADERS = {"User-Agent": "Voce/0.1 (personal TTS companion; +local)"}
+_FETCH_TIMEOUT = 20
+
+
+def build_preamble(title: str, author: str | None, published_at: str) -> str:
+    return (
+        f"From Quanta Magazine. {title}. "
+        f"By {author or 'Quanta Magazine'}. "
+        f"Published {published_at[:10]}."
+    )
+
+
+def fetch_article_html(url: str, client: httpx.Client) -> str:
+    try:
+        response = client.get(url, headers=_FETCH_HEADERS, timeout=_FETCH_TIMEOUT)
+    except httpx.TimeoutException as exc:
+        raise ArticleFetchError(url, exc) from exc
+    if not response.is_success:
+        raise ArticleFetchError(url, ValueError(f"HTTP {response.status_code}"))
+    return response.text
