@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Quanta Magazine - Physics</title>
+    <link>https://www.quantamagazine.org</link>
+    <description>Physics articles from Quanta Magazine</description>
+
+    <item>
+      <title>The Mystery of Quantum Entanglement</title>
+      <link>https://www.quantamagazine.org/quantum-entanglement-explained-20240115/</link>
+      <guid>https://www.quantamagazine.org/?p=10001</guid>
+      <author>Jane Smith</author>
+      <pubDate>Mon, 15 Jan 2024 12:00:00 +0000</pubDate>
+      <description>A deep dive into how entanglement challenges classical intuitions.</description>
+    </item>
+
+    <item>
+      <title>Black Holes and the Information Paradox</title>
+      <link>https://www.quantamagazine.org/black-holes-information-paradox-20240220/</link>
+      <author>Bob Jones</author>
+      <pubDate>Tue, 20 Feb 2024 09:00:00 +0000</pubDate>
+      <description>Physicists inch closer to resolving what happens to information swallowed by black holes.</description>
+      <enclosure url="https://api.quantamagazine.org/audio/black-holes-information-paradox.mp3" type="audio/mpeg" length="18432000"/>
+    </item>
+
+    <item>
+      <title>The Shape of Spacetime</title>
+      <link>https://www.quantamagazine.org/shape-of-spacetime-20231010/</link>
+      <guid>https://www.quantamagazine.org/?p=10003</guid>
+      <author>Carol White</author>
+      <pubDate>Tue, 10 Oct 2023 14:30:00 +0000</pubDate>
+      <description>How general relativity predicts the curvature of the universe.</description>
+    </item>
+
+  </channel>
+</rss>
