@@ -55,7 +55,9 @@ def test_articles_returns_list(client):
 def test_articles_section_filter(client):
     resp = client.get("/api/articles?section=physics")
     assert resp.status_code == 200
-    for item in resp.json()["items"]:
+    items = resp.json()["items"]
+    assert items, "Expected at least one article for section=physics"
+    for item in items:
         assert item["section"] == "physics"
 
 
