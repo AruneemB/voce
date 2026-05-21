@@ -1,6 +1,7 @@
 """Quanta Magazine RSS feed ingestion and article upsert logic."""
 
 import hashlib
+import sqlite3
 import time
 from datetime import datetime
 
@@ -79,4 +80,58 @@ def parse_entries(slug: str, parsed: feedparser.FeedParserDict) -> list[dict]:
             "summary": entry.get("summary", ""),
             "quanta_audio_url": audio_url,
         })
+    return results
+
+
+def upsert_articles(
+    entries: list[dict], conn: sqlite3.Connection
+) -> tuple[int, int]:
+    """Insert new articles (and reading_state rows) into the DB, ignoring duplicates."""
+    inserted = 0
+    skipped = 0
+    cur = conn.cursor()
+    for e in entries:
+        cur.execute(
+            """
+            INSERT OR IGNORE INTO articles
+                (id, section, title, author, published_at, url, summary, quanta_audio_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                e["article_id"],
+                e["section"],
+                e["title"],
+                e["author"],
+                e["published_at"],
+                e["url"],
+                e["summary"],
+                e["quanta_audio_url"],
+            ),
+        )
+        if cur.rowcount == 1:
+            inserted += 1
+            conn.execute(
+                "INSERT OR IGNORE INTO reading_state (article_id, status) VALUES (?, 'unread')",
+                (e["article_id"],),
+            )
+        else:
+            skipped += 1
+    conn.commit()
+    return inserted, skipped
+
+
+def refresh_all_feeds(conn: sqlite3.Connection) -> dict[str, tuple[int, int]]:
+    """Fetch, parse, and upsert all Quanta Magazine feeds; return per-slug counts."""
+    results: dict[str, tuple[int, int]] = {}
+    with httpx.Client(headers={"User-Agent": _USER_AGENT}, timeout=_TIMEOUT_SEC) as client:
+        for slug, url in QUANTA_FEEDS.items():
+            try:
+                parsed = fetch_feed(slug, url, client)
+                entries = parse_entries(slug, parsed)
+                inserted, skipped = upsert_articles(entries, conn)
+                results[slug] = (inserted, skipped)
+            except FeedFetchError as exc:
+                logger.error("Feed '{}' failed: {}", slug, exc)
+                results[slug] = (0, 0)
+    logger.info("Feed refresh complete: {}", results)
     return results
