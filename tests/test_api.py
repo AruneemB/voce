@@ -57,3 +57,19 @@ def test_article_detail_returns_body_text(client):
     resp = client.get("/api/articles/art1")
     assert resp.status_code == 200
     assert resp.json()["body_text"] == "Body text here."
+
+
+def test_article_detail_404_for_missing(client):
+    resp = client.get("/api/articles/does-not-exist")
+    assert resp.status_code == 404
+
+
+def test_topics_returns_list(client):
+    resp = client.get("/api/topics")
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)
+
+
+def test_localhost_middleware_blocks_external_host(client):
+    resp = client.get("/api/sections", headers={"host": "evil.com"})
+    assert resp.status_code == 403
