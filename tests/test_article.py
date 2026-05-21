@@ -457,6 +457,24 @@ def test_enrich_article_stores_fetched_html(article_row, mock_client):
     assert row["body_html"] == "<p>Fetched body.</p>"
 
 
+def test_enrich_article_missing_id_returns_false(mem_conn, mock_client):
+    ok = enrich_article(
+        "nonexistent", "https://example.com/",
+        "<p>Text.</p>", mem_conn, mock_client,
+    )
+    assert ok is False
+
+
+def test_enrich_article_missing_id_logs_warning(mem_conn, mock_client):
+    with patch("voce.article.logger") as mock_logger:
+        ok = enrich_article(
+            "nonexistent", "https://example.com/",
+            "<p>Text.</p>", mem_conn, mock_client,
+        )
+    assert ok is False
+    mock_logger.warning.assert_called_once()
+
+
 # ---------------------------------------------------------------------------
 # enrich_all_unenriched
 # ---------------------------------------------------------------------------
