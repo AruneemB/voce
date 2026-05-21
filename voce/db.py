@@ -74,7 +74,7 @@ END;
 def get_connection() -> sqlite3.Connection:
     """Open and configure a new SQLite connection. Caller is responsible for closing it."""
     settings.db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(settings.db_path))
+    conn = sqlite3.connect(str(settings.db_path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
