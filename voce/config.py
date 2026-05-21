@@ -32,3 +32,6 @@ def load_settings() -> Settings:
             "Add it to your .env file or set it as an environment variable."
         )
     return s
+
+
+settings: Settings = load_settings()
