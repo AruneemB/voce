@@ -3,6 +3,11 @@
 from typing import Optional
 
 from pydantic import BaseModel
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
+
+from voce.config import settings
 
 SECTION_LABELS: dict[str, str] = {
     "physics": "Physics",
@@ -45,3 +50,15 @@ class TopicOut(BaseModel):
     slug: str
     label: str
     article_count: int
+
+
+class LocalhostOnlyMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next) -> Response:
+        host_header = request.headers.get("host", "")
+        allowed = {
+            f"127.0.0.1:{settings.port}",
+            f"localhost:{settings.port}",
+        }
+        if host_header not in allowed:
+            return Response("Forbidden: remote access not allowed", status_code=403)
+        return await call_next(request)
