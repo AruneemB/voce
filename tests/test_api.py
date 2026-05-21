@@ -21,11 +21,17 @@ def client():
     conn.execute("INSERT INTO reading_state (article_id, status) VALUES ('art1', 'unread')")
     conn.commit()
 
+    previous_override = app.dependency_overrides.get(get_conn)
     app.dependency_overrides[get_conn] = lambda: conn
-    with TestClient(app, headers={"host": "127.0.0.1:8765"}) as c:
-        yield c
-    app.dependency_overrides.clear()
-    conn.close()
+    try:
+        with TestClient(app, headers={"host": "127.0.0.1:8765"}) as c:
+            yield c
+    finally:
+        if previous_override is None:
+            app.dependency_overrides.pop(get_conn, None)
+        else:
+            app.dependency_overrides[get_conn] = previous_override
+        conn.close()
 
 
 def test_sections_returns_list(client):
