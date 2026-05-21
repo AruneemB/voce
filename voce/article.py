@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import re
+import sqlite3
 
 import httpx
+from loguru import logger
 
-from voce.exceptions import ArticleFetchError
+from voce.exceptions import ArticleFetchError, ArticleParseError
 
 _LATEX_SUBS: list[tuple[str, str]] = [
     (r"\\frac\{([^}]+)\}\{([^}]+)\}", r"\1 over \2"),
@@ -127,3 +129,55 @@ def fetch_article_html(url: str, client: httpx.Client) -> str:
     if not response.is_success:
         raise ArticleFetchError(url, ValueError(f"HTTP {response.status_code}"))
     return response.text
+
+
+def enrich_article(
+    article_id: str,
+    url: str,
+    body_html: str,
+    conn: sqlite3.Connection,
+    client: httpx.Client,
+) -> bool:
+    try:
+        if body_html:
+            body_text = clean_html_for_tts(body_html)
+        else:
+            body_html = fetch_article_html(url, client)
+            body_text = clean_html_for_tts(body_html)
+    except (ArticleFetchError, ArticleParseError) as exc:
+        logger.warning("Could not enrich article {}: {}", article_id, exc)
+        return False
+
+    row = conn.execute(
+        "SELECT title, author, published_at FROM articles WHERE id=?",
+        (article_id,),
+    ).fetchone()
+
+    preamble = build_preamble(row["title"], row["author"], row["published_at"])
+    full_text = preamble + "\n\n" + body_text
+
+    conn.execute(
+        "UPDATE articles SET body_text=?, body_html=? WHERE id=?",
+        (full_text, body_html, article_id),
+    )
+    conn.commit()
+    return True
+
+
+def enrich_all_unenriched(
+    conn: sqlite3.Connection,
+    client: httpx.Client,
+) -> tuple[int, int]:
+    rows = conn.execute(
+        "SELECT id, url, body_html FROM articles WHERE body_text = '' OR body_text IS NULL"
+    ).fetchall()
+
+    success = 0
+    failure = 0
+    for row in rows:
+        ok = enrich_article(row["id"], row["url"], row["body_html"] or "", conn, client)
+        if ok:
+            success += 1
+        else:
+            failure += 1
+    return success, failure
