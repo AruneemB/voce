@@ -1,6 +1,8 @@
 """Quanta Magazine RSS feed ingestion and article upsert logic."""
 
+import hashlib
 import time
+from datetime import datetime
 
 import feedparser
 import httpx
@@ -47,3 +49,34 @@ def fetch_feed(slug: str, url: str, client: httpx.Client) -> feedparser.FeedPars
         return feedparser.parse(response.text)
 
     raise FeedFetchError(slug, url, last_exc)
+
+
+def parse_entries(slug: str, parsed: feedparser.FeedParserDict) -> list[dict]:
+    """Extract and normalise article dicts from a parsed RSS feed."""
+    results = []
+    for entry in parsed.entries:
+        url = entry.get("link", "")
+        article_id = hashlib.sha256(url.encode()).hexdigest()[:16]
+
+        if entry.get("published_parsed"):
+            published_at = datetime(*entry.published_parsed[:6]).isoformat() + "Z"
+        else:
+            published_at = datetime.utcnow().isoformat() + "Z"
+
+        audio_url = None
+        for enclosure in entry.get("enclosures", []):
+            if enclosure.get("type", "").startswith("audio/"):
+                audio_url = enclosure.get("url")
+                break
+
+        results.append({
+            "article_id": article_id,
+            "section": slug,
+            "title": entry.get("title", "Untitled"),
+            "author": entry.get("author", "Unknown"),
+            "published_at": published_at,
+            "url": url,
+            "summary": entry.get("summary", ""),
+            "quanta_audio_url": audio_url,
+        })
+    return results
