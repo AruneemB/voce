@@ -1,8 +1,51 @@
 """Tests for voce.article — all run offline via mocks and in-memory SQLite."""
 
+import sqlite3
+from unittest.mock import MagicMock, patch
+
+import httpx
 import pytest
 
-from voce.article import apply_latex_substitutions, clean_html_for_tts, count_words, build_preamble
+from voce.db import bootstrap_schema
+from voce.exceptions import ArticleFetchError
+from voce.article import (
+    apply_latex_substitutions,
+    build_preamble,
+    clean_html_for_tts,
+    count_words,
+    enrich_all_unenriched,
+    enrich_article,
+    fetch_article_html,
+)
+
+@pytest.fixture
+def mem_conn():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    bootstrap_schema(conn)
+    yield conn
+    conn.close()
+
+
+@pytest.fixture
+def article_row(mem_conn):
+    mem_conn.execute(
+        "INSERT INTO articles (id, section, title, author, published_at, url, body_html, body_text)"
+        " VALUES (?,?,?,?,?,?,?,?)",
+        (
+            "art001", "physics", "The Shape of Reality", "Jane Smith",
+            "2024-03-15T09:00:00Z", "https://example.com/", "", "",
+        ),
+    )
+    mem_conn.commit()
+    return mem_conn
+
+
+@pytest.fixture
+def mock_client():
+    return MagicMock(spec=httpx.Client)
+
 
 LATEX_CASES = [
     (r"\frac{1}{2}", "1 over 2"),
@@ -259,3 +302,199 @@ def test_build_preamble_date_sliced():
 def test_build_preamble_exact_format():
     result = build_preamble("Black Holes", "Jane Smith", "2024-03-15T09:00:00Z")
     assert result == "From Quanta Magazine. Black Holes. By Jane Smith. Published 2024-03-15."
+
+
+# ---------------------------------------------------------------------------
+# fetch_article_html
+# ---------------------------------------------------------------------------
+
+def test_fetch_article_html_success(mock_client):
+    mock_response = MagicMock()
+    mock_response.is_success = True
+    mock_response.text = "<html><body><p>Article content</p></body></html>"
+    mock_client.get.return_value = mock_response
+
+    result = fetch_article_html("https://example.com/article", mock_client)
+    assert result == "<html><body><p>Article content</p></body></html>"
+
+
+def test_fetch_article_html_sends_user_agent(mock_client):
+    mock_response = MagicMock()
+    mock_response.is_success = True
+    mock_response.text = "<p>content</p>"
+    mock_client.get.return_value = mock_response
+
+    fetch_article_html("https://example.com/article", mock_client)
+
+    headers = mock_client.get.call_args.kwargs.get("headers", {})
+    assert "Voce/0.1" in headers.get("User-Agent", "")
+
+
+def test_fetch_article_html_timeout_raises(mock_client):
+    mock_client.get.side_effect = httpx.TimeoutException("timed out")
+
+    with pytest.raises(ArticleFetchError) as exc_info:
+        fetch_article_html("https://example.com/article", mock_client)
+    assert exc_info.value.url == "https://example.com/article"
+
+
+def test_fetch_article_html_404_raises(mock_client):
+    mock_response = MagicMock()
+    mock_response.is_success = False
+    mock_response.status_code = 404
+    mock_client.get.return_value = mock_response
+
+    with pytest.raises(ArticleFetchError):
+        fetch_article_html("https://example.com/404", mock_client)
+
+
+def test_fetch_article_html_500_raises(mock_client):
+    mock_response = MagicMock()
+    mock_response.is_success = False
+    mock_response.status_code = 500
+    mock_client.get.return_value = mock_response
+
+    with pytest.raises(ArticleFetchError):
+        fetch_article_html("https://example.com/500", mock_client)
+
+
+# ---------------------------------------------------------------------------
+# enrich_article
+# ---------------------------------------------------------------------------
+
+def test_enrich_article_with_body_html_does_not_fetch(article_row, mock_client):
+    ok = enrich_article(
+        "art001", "https://example.com/",
+        "<p>Interesting physics.</p>", article_row, mock_client,
+    )
+    assert ok is True
+    mock_client.get.assert_not_called()
+
+    row = article_row.execute(
+        "SELECT body_text FROM articles WHERE id='art001'"
+    ).fetchone()
+    assert "Interesting physics." in row["body_text"]
+    assert "From Quanta Magazine." in row["body_text"]
+
+
+def test_enrich_article_empty_body_html_triggers_fetch(article_row, mock_client):
+    mock_response = MagicMock()
+    mock_response.is_success = True
+    mock_response.text = "<p>Fetched content.</p>"
+    mock_client.get.return_value = mock_response
+
+    ok = enrich_article("art001", "https://example.com/", "", article_row, mock_client)
+    assert ok is True
+    mock_client.get.assert_called_once()
+
+
+def test_enrich_article_fetch_error_returns_false(article_row, mock_client):
+    mock_client.get.side_effect = httpx.TimeoutException("timeout")
+
+    ok = enrich_article("art001", "https://example.com/", "", article_row, mock_client)
+    assert ok is False
+
+
+def test_enrich_article_prepends_preamble(article_row, mock_client):
+    ok = enrich_article(
+        "art001", "https://example.com/",
+        "<p>Body text.</p>", article_row, mock_client,
+    )
+    assert ok is True
+    row = article_row.execute(
+        "SELECT body_text FROM articles WHERE id='art001'"
+    ).fetchone()
+    body = row["body_text"]
+    assert body.startswith("From Quanta Magazine.")
+    assert "The Shape of Reality" in body
+    assert "Jane Smith" in body
+    assert "2024-03-15" in body
+
+
+def test_enrich_article_fetch_error_logs_warning(article_row, mock_client):
+    mock_client.get.side_effect = httpx.TimeoutException("boom")
+
+    with patch("voce.article.logger") as mock_logger:
+        ok = enrich_article("art001", "https://example.com/", "", article_row, mock_client)
+
+    assert ok is False
+    mock_logger.warning.assert_called_once()
+
+
+def test_enrich_article_stores_fetched_html(article_row, mock_client):
+    mock_response = MagicMock()
+    mock_response.is_success = True
+    mock_response.text = "<p>Fetched body.</p>"
+    mock_client.get.return_value = mock_response
+
+    enrich_article("art001", "https://example.com/", "", article_row, mock_client)
+
+    row = article_row.execute(
+        "SELECT body_html FROM articles WHERE id='art001'"
+    ).fetchone()
+    assert row["body_html"] == "<p>Fetched body.</p>"
+
+
+# ---------------------------------------------------------------------------
+# enrich_all_unenriched
+# ---------------------------------------------------------------------------
+
+def _insert_article(conn, article_id, body_html="", body_text=""):
+    conn.execute(
+        "INSERT INTO articles (id, section, title, author, published_at, url, body_html, body_text)"
+        " VALUES (?,?,?,?,?,?,?,?)",
+        (
+            article_id, "physics", f"Title {article_id}", "Author",
+            "2024-01-01T00:00:00Z", f"https://example.com/{article_id}",
+            body_html, body_text,
+        ),
+    )
+    conn.commit()
+
+
+def test_enrich_all_unenriched_success(mem_conn, mock_client):
+    _insert_article(mem_conn, "a1", body_html="<p>content</p>")
+    _insert_article(mem_conn, "a2", body_html="<p>other</p>")
+
+    success, failure = enrich_all_unenriched(mem_conn, mock_client)
+    assert success == 2
+    assert failure == 0
+
+
+def test_enrich_all_unenriched_skips_enriched(mem_conn, mock_client):
+    _insert_article(mem_conn, "a3", body_html="<p>x</p>", body_text="Already enriched text")
+    _insert_article(mem_conn, "a4", body_html="<p>y</p>")
+
+    success, failure = enrich_all_unenriched(mem_conn, mock_client)
+    assert success == 1
+    assert failure == 0
+
+
+def test_enrich_all_unenriched_counts_failures(mem_conn, mock_client):
+    _insert_article(mem_conn, "b1", body_html="", body_text="")
+    _insert_article(mem_conn, "b2", body_html="<p>good</p>")
+    mock_client.get.side_effect = httpx.TimeoutException("timeout")
+
+    success, failure = enrich_all_unenriched(mem_conn, mock_client)
+    assert success == 1
+    assert failure == 1
+
+
+def test_enrich_all_unenriched_empty_db(mem_conn, mock_client):
+    success, failure = enrich_all_unenriched(mem_conn, mock_client)
+    assert success == 0
+    assert failure == 0
+    mock_client.get.assert_not_called()
+
+
+def test_enrich_all_unenriched_updates_body_text(mem_conn, mock_client):
+    _insert_article(mem_conn, "c1", body_html="<p>Clean this.</p>")
+
+    enrich_all_unenriched(mem_conn, mock_client)
+
+    row = mem_conn.execute(
+        "SELECT body_text FROM articles WHERE id='c1'"
+    ).fetchone()
+    assert row["body_text"] != ""
+    assert "From Quanta Magazine." in row["body_text"]
+    assert "Clean this." in row["body_text"]
