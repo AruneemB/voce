@@ -62,6 +62,12 @@ AFTER UPDATE OF title, body_text ON articles BEGIN
     INSERT INTO fts_articles(rowid, title, body_text)
     VALUES (new.rowid, new.title, new.body_text);
 END;
+
+CREATE TRIGGER IF NOT EXISTS articles_ad
+AFTER DELETE ON articles BEGIN
+    INSERT INTO fts_articles(fts_articles, rowid, title, body_text)
+    VALUES ('delete', old.rowid, old.title, old.body_text);
+END;
 """
 
 
