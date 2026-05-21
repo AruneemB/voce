@@ -26,7 +26,7 @@ class Settings:
 def load_settings() -> Settings:
     """Load settings from environment. Raises ValueError if ELEVENLABS_API_KEY is missing."""
     s = Settings()
-    if not s.elevenlabs_api_key:
+    if not s.elevenlabs_api_key.strip():
         raise ValueError(
             "ELEVENLABS_API_KEY is not set. "
             "Add it to your .env file or set it as an environment variable."
