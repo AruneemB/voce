@@ -11,6 +11,8 @@ load_dotenv()
 
 @dataclass
 class Settings:
+    """Runtime configuration for Voce, populated from environment variables."""
+
     elevenlabs_api_key: str = field(default_factory=lambda: os.environ.get("ELEVENLABS_API_KEY", ""))
     elevenlabs_voice_id: str = field(default_factory=lambda: os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM"))
     elevenlabs_model_id: str = field(default_factory=lambda: os.environ.get("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5"))

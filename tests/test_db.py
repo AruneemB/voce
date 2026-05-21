@@ -15,17 +15,20 @@ def mem_conn():
 
 
 def test_bootstrap_creates_articles_table(mem_conn):
+    """bootstrap_schema() must create the articles table."""
     tables = {r[0] for r in mem_conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
     assert "articles" in tables
 
 
 def test_bootstrap_creates_all_tables(mem_conn):
+    """All four core tables must exist after bootstrap."""
     tables = {r[0] for r in mem_conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
     for expected in ("articles", "article_topics", "reading_state", "audio_cache"):
         assert expected in tables, f"Missing table: {expected}"
 
 
 def test_reading_state_check_constraint_rejects_invalid_status(mem_conn):
+    """INSERT with an invalid status value must raise IntegrityError."""
     mem_conn.execute(
         "INSERT INTO articles (id, section, title, published_at, url, body_html, body_text) "
         "VALUES (?,?,?,?,?,?,?)",
@@ -41,6 +44,7 @@ def test_reading_state_check_constraint_rejects_invalid_status(mem_conn):
 
 
 def test_fk_cascade_deletes_audio_cache(mem_conn):
+    """Deleting an article must cascade to its audio_cache row."""
     mem_conn.execute(
         "INSERT INTO articles (id, section, title, published_at, url, body_html, body_text) "
         "VALUES (?,?,?,?,?,?,?)",
@@ -58,6 +62,7 @@ def test_fk_cascade_deletes_audio_cache(mem_conn):
 
 
 def test_get_connection_returns_row_factory():
+    """get_connection() must return a connection supporting column-name row access."""
     conn = get_connection()
     conn.execute("CREATE TABLE IF NOT EXISTS _test (x INTEGER)")
     conn.execute("INSERT INTO _test VALUES (42)")
@@ -67,6 +72,7 @@ def test_get_connection_returns_row_factory():
 
 
 def test_fts_delete_trigger_removes_article_from_index(mem_conn):
+    """articles_ad trigger must remove the deleted article from the FTS5 index."""
     mem_conn.execute(
         "INSERT INTO articles (id, section, title, published_at, url, body_html, body_text) "
         "VALUES (?,?,?,?,?,?,?)",

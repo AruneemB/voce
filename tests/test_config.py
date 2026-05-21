@@ -22,6 +22,7 @@ def test_load_settings_succeeds_with_api_key(monkeypatch):
 
 
 def test_default_port_is_8765(monkeypatch):
+    """Default port must be 8765 when PORT env var is absent."""
     monkeypatch.setenv("ELEVENLABS_API_KEY", "k")
     monkeypatch.delenv("PORT", raising=False)
     import voce.config as cfg

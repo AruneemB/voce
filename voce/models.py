@@ -7,6 +7,8 @@ from typing import Optional
 
 @dataclass
 class Article:
+    """Ingested Quanta Magazine article with metadata, HTML source, and plain-text body."""
+
     id: str
     section: str
     title: str
@@ -21,12 +23,15 @@ class Article:
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Article":
+        """Hydrate an Article from a sqlite3.Row, ignoring any extra columns."""
         allowed = {f.name for f in fields(cls)}
         return cls(**{k: row[k] for k in row.keys() if k in allowed})
 
 
 @dataclass
 class ReadingState:
+    """Per-article playback status and timestamps."""
+
     article_id: str
     status: str
     last_played_at: Optional[str]
@@ -34,12 +39,15 @@ class ReadingState:
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "ReadingState":
+        """Hydrate a ReadingState from a sqlite3.Row, ignoring any extra columns."""
         allowed = {f.name for f in fields(cls)}
         return cls(**{k: row[k] for k in row.keys() if k in allowed})
 
 
 @dataclass
 class AudioCache:
+    """Metadata for a locally synthesised MP3 file linked to an article."""
+
     article_id: str
     file_path: str
     voice_id: str
@@ -49,5 +57,6 @@ class AudioCache:
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "AudioCache":
+        """Hydrate an AudioCache from a sqlite3.Row, ignoring any extra columns."""
         allowed = {f.name for f in fields(cls)}
         return cls(**{k: row[k] for k in row.keys() if k in allowed})
