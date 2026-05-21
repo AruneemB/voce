@@ -5,8 +5,9 @@ import pytest
 
 def test_load_settings_raises_when_api_key_missing(monkeypatch):
     """load_settings() must raise ValueError with a clear message when ELEVENLABS_API_KEY is absent."""
-    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "bootstrap-key")
     import voce.config as cfg
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
     with pytest.raises(ValueError, match="ELEVENLABS_API_KEY is not set"):
         cfg.load_settings()
 
