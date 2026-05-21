@@ -98,3 +98,24 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+
+@app.get("/")
+def root() -> FileResponse:
+    return FileResponse("voce/static/index.html")
+
+
+@app.get("/api/sections", response_model=list[SectionOut])
+def list_sections(conn: ConnDep) -> list[SectionOut]:
+    rows = conn.execute(
+        "SELECT a.section, COUNT(*) AS unread_count "
+        "FROM articles a "
+        "JOIN reading_state rs ON rs.article_id = a.id "
+        "WHERE rs.status = 'unread' "
+        "GROUP BY a.section"
+    ).fetchall()
+    counts: dict[str, int] = {r["section"]: r["unread_count"] for r in rows}
+    return [
+        SectionOut(section=slug, display_name=label, unread_count=counts.get(slug, 0))
+        for slug, label in SECTION_LABELS.items()
+    ]
