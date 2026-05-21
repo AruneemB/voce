@@ -305,6 +305,51 @@ def test_build_preamble_exact_format():
 
 
 # ---------------------------------------------------------------------------
+# LaTeX pattern tightening — word boundaries and subscript safety
+# ---------------------------------------------------------------------------
+
+def test_latex_word_boundary_pi_not_prefix():
+    result = apply_latex_substitutions(r"\piecewise")
+    assert "pi" not in result
+
+
+def test_latex_word_boundary_sum_not_prefix():
+    result = apply_latex_substitutions(r"\summation")
+    assert "sum" not in result
+
+
+def test_latex_word_boundary_int_not_prefix():
+    result = apply_latex_substitutions(r"\intersection")
+    assert "integral" not in result
+
+
+def test_latex_word_boundary_mu_not_prefix():
+    result = apply_latex_substitutions(r"\multiline")
+    assert "mu" not in result
+
+
+def test_latex_word_boundary_pi_exact():
+    result = apply_latex_substitutions(r"\pi")
+    assert result.strip() == "pi"
+
+
+def test_latex_word_boundary_pi_before_brace():
+    result = apply_latex_substitutions(r"\pi{}")
+    assert "pi" in result
+
+
+def test_latex_bare_subscript_not_rewritten():
+    result = apply_latex_substitutions("foo_bar")
+    assert "sub" not in result
+    assert "foo_bar" in result
+
+
+def test_latex_braced_subscript_still_works():
+    result = apply_latex_substitutions(r"x_{n}")
+    assert "sub n" in result
+
+
+# ---------------------------------------------------------------------------
 # fetch_article_html
 # ---------------------------------------------------------------------------
 
