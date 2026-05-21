@@ -153,6 +153,10 @@ def enrich_article(
         (article_id,),
     ).fetchone()
 
+    if row is None:
+        logger.warning("Article {} not found in database; skipping enrichment", article_id)
+        return False
+
     preamble = build_preamble(row["title"], row["author"], row["published_at"])
     full_text = preamble + "\n\n" + body_text
 
