@@ -64,3 +64,22 @@ def test_get_connection_returns_row_factory():
     row = conn.execute("SELECT x FROM _test").fetchone()
     assert row["x"] == 42
     conn.close()
+
+
+def test_fts_delete_trigger_removes_article_from_index(mem_conn):
+    mem_conn.execute(
+        "INSERT INTO articles (id, section, title, published_at, url, body_html, body_text) "
+        "VALUES (?,?,?,?,?,?,?)",
+        ("fts1", "biology", "Quantum Entanglement", "2024-01-04T00:00:00Z", "https://example.com/fts1", "", "entanglement body text"),
+    )
+    mem_conn.commit()
+    hits_before = mem_conn.execute(
+        "SELECT rowid FROM fts_articles WHERE fts_articles MATCH ?", ("entanglement",)
+    ).fetchall()
+    assert len(hits_before) == 1
+    mem_conn.execute("DELETE FROM articles WHERE id=?", ("fts1",))
+    mem_conn.commit()
+    hits_after = mem_conn.execute(
+        "SELECT rowid FROM fts_articles WHERE fts_articles MATCH ?", ("entanglement",)
+    ).fetchall()
+    assert len(hits_after) == 0
