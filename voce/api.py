@@ -119,8 +119,8 @@ def list_sections(conn: ConnDep) -> list[SectionOut]:
     rows = conn.execute(
         "SELECT a.section, COUNT(*) AS unread_count "
         "FROM articles a "
-        "JOIN reading_state rs ON rs.article_id = a.id "
-        "WHERE rs.status = 'unread' "
+        "LEFT JOIN reading_state rs ON rs.article_id = a.id "
+        "WHERE COALESCE(rs.status, 'unread') = 'unread' "
         "GROUP BY a.section"
     ).fetchall()
     counts: dict[str, int] = {r["section"]: r["unread_count"] for r in rows}
@@ -144,7 +144,7 @@ def list_articles(
     if section:
         conditions.append(("a.section = ?", section))
     if status:
-        conditions.append(("rs.status = ?", status))
+        conditions.append(("COALESCE(rs.status, 'unread') = ?", status))
     if topic:
         conditions.append((
             "EXISTS (SELECT 1 FROM article_topics at WHERE at.article_id = a.id AND at.topic = ?)",
