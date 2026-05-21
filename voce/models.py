@@ -1,7 +1,7 @@
 """Pure-Python dataclasses mirroring the Voce database schema."""
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Optional
 
 
@@ -21,7 +21,8 @@ class Article:
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Article":
-        return cls(**{k: row[k] for k in row.keys()})
+        allowed = {f.name for f in fields(cls)}
+        return cls(**{k: row[k] for k in row.keys() if k in allowed})
 
 
 @dataclass
@@ -33,7 +34,8 @@ class ReadingState:
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "ReadingState":
-        return cls(**{k: row[k] for k in row.keys()})
+        allowed = {f.name for f in fields(cls)}
+        return cls(**{k: row[k] for k in row.keys() if k in allowed})
 
 
 @dataclass
@@ -47,4 +49,5 @@ class AudioCache:
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "AudioCache":
-        return cls(**{k: row[k] for k in row.keys()})
+        allowed = {f.name for f in fields(cls)}
+        return cls(**{k: row[k] for k in row.keys() if k in allowed})
