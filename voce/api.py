@@ -263,6 +263,6 @@ def list_topics(
 
 @app.post("/api/refresh")
 async def refresh(conn: ConnDep) -> dict:
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     results = await loop.run_in_executor(None, refresh_all_feeds, conn)
     return {slug: list(counts) for slug, counts in results.items()}
