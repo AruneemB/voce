@@ -45,3 +45,59 @@ def apply_latex_substitutions(text: str) -> str:
 
 def count_words(text: str) -> int:
     return len(text.split())
+
+
+_REMOVE_TAGS = {"script", "style", "aside", "figure", "iframe", "noscript"}
+_REMOVE_CLASS_SUBSTRINGS = {"share", "newsletter", "related", "byline", "sidebar"}
+_OL_ORDINALS = [
+    "First", "Second", "Third", "Fourth", "Fifth",
+    "Sixth", "Seventh", "Eighth", "Ninth",
+]
+
+
+def clean_html_for_tts(html: str) -> str:
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "lxml")
+
+    for tag_name in _REMOVE_TAGS:
+        for tag in soup.find_all(tag_name):
+            tag.decompose()
+
+    for tag in soup.find_all(True):
+        classes = " ".join(tag.get("class") or []).lower()
+        if any(sub in classes for sub in _REMOVE_CLASS_SUBSTRINGS):
+            tag.decompose()
+
+    for br in soup.find_all("br"):
+        br.replace_with("\n")
+
+    for level in range(1, 7):
+        for tag in soup.find_all(f"h{level}"):
+            tag.replace_with(f"\n\n{tag.get_text(strip=True)}.\n\n")
+
+    for tag in soup.find_all("blockquote"):
+        tag.replace_with(f"\n\nQuote: {tag.get_text(strip=True)} End quote.\n\n")
+
+    for ol in soup.find_all("ol"):
+        items = ol.find_all("li")
+        parts = []
+        for n, li in enumerate(items, start=1):
+            ordinal = _OL_ORDINALS[n - 1] if n <= 9 else f"{n}."
+            parts.append(f"{ordinal}, {li.get_text(strip=True)}.")
+        ol.replace_with(" ".join(parts))
+
+    for ul in soup.find_all("ul"):
+        items = [li.get_text(strip=True) for li in ul.find_all("li")]
+        if len(items) == 0:
+            ul.replace_with("")
+        elif len(items) == 1:
+            ul.replace_with(items[0])
+        else:
+            ul.replace_with(", ".join(items[:-1]) + ", and " + items[-1])
+
+    text = soup.get_text(separator=" ", strip=True)
+    text = apply_latex_substitutions(text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    return text.strip()
