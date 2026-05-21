@@ -4,7 +4,7 @@ import sqlite3
 from contextlib import asynccontextmanager
 from typing import Annotated, Optional
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Query
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from pydantic import BaseModel
@@ -119,3 +119,82 @@ def list_sections(conn: ConnDep) -> list[SectionOut]:
         SectionOut(section=slug, display_name=label, unread_count=counts.get(slug, 0))
         for slug, label in SECTION_LABELS.items()
     ]
+
+
+@app.get("/api/articles", response_model=PaginatedArticles)
+def list_articles(
+    conn: ConnDep,
+    section: Optional[str] = Query(None),
+    topic: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    q: Optional[str] = Query(None),
+    limit: int = Query(30, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+) -> PaginatedArticles:
+    conditions: list[tuple[str, object]] = []
+    if section:
+        conditions.append(("a.section = ?", section))
+    if status:
+        conditions.append(("rs.status = ?", status))
+    if topic:
+        conditions.append((
+            "EXISTS (SELECT 1 FROM article_topics at WHERE at.article_id = a.id AND at.topic = ?)",
+            topic,
+        ))
+
+    base_cols = (
+        "SELECT a.id, a.section, a.title, a.author, a.published_at, a.url, "
+        "a.summary, a.quanta_audio_url, COALESCE(rs.status, 'unread') AS status "
+    )
+    base_from = (
+        "FROM articles a "
+        "LEFT JOIN reading_state rs ON rs.article_id = a.id"
+    )
+    count_from = (
+        "SELECT COUNT(*) "
+        "FROM articles a "
+        "LEFT JOIN reading_state rs ON rs.article_id = a.id"
+    )
+
+    fts_param: list[object] = []
+    if q:
+        fts_join = (
+            " JOIN (SELECT rowid FROM fts_articles WHERE fts_articles MATCH ?) fts"
+            " ON fts.rowid = a.rowid"
+        )
+        base_from = base_from + fts_join
+        count_from = count_from + fts_join
+        fts_param = [q]
+
+    where_clause = ""
+    where_params: list[object] = []
+    if conditions:
+        where_clause = " WHERE " + " AND ".join(c[0] for c in conditions)
+        where_params = [c[1] for c in conditions]
+
+    order_limit = " ORDER BY a.published_at DESC LIMIT ? OFFSET ?"
+
+    data_sql = base_cols + base_from + where_clause + order_limit
+    count_sql = count_from + where_clause
+
+    data_params = fts_param + where_params + [limit, offset]
+    count_params = fts_param + where_params
+
+    rows = conn.execute(data_sql, data_params).fetchall()
+    total = conn.execute(count_sql, count_params).fetchone()[0]
+
+    items = [
+        ArticleSummaryOut(
+            id=r["id"],
+            section=r["section"],
+            title=r["title"],
+            author=r["author"],
+            published_at=r["published_at"],
+            url=r["url"],
+            summary=r["summary"],
+            status=r["status"],
+            quanta_audio_url=r["quanta_audio_url"],
+        )
+        for r in rows
+    ]
+    return PaginatedArticles(items=items, total=total, limit=limit, offset=offset)
