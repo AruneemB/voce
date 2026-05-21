@@ -124,7 +124,7 @@ def build_preamble(title: str, author: str | None, published_at: str) -> str:
 def fetch_article_html(url: str, client: httpx.Client) -> str:
     try:
         response = client.get(url, headers=_FETCH_HEADERS, timeout=_FETCH_TIMEOUT)
-    except httpx.TimeoutException as exc:
+    except httpx.RequestError as exc:
         raise ArticleFetchError(url, exc) from exc
     if not response.is_success:
         raise ArticleFetchError(url, ValueError(f"HTTP {response.status_code}"))
