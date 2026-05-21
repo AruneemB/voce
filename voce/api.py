@@ -1,10 +1,10 @@
 """FastAPI application factory, routes, and response models for Voce."""
 
+import asyncio
+import ipaddress
 import sqlite3
 from contextlib import asynccontextmanager
 from typing import Annotated, Optional
-
-import asyncio
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
@@ -63,12 +63,18 @@ class TopicOut(BaseModel):
 
 class LocalhostOnlyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
+        # Primary: reject connections from non-loopback IPs (not spoofable via headers).
+        # Non-IP client identifiers (e.g. the test-client sentinel) are skipped.
+        if request.client:
+            try:
+                ip = ipaddress.ip_address(request.client.host)
+                if not ip.is_loopback:
+                    return Response("Forbidden: remote access not allowed", status_code=403)
+            except ValueError:
+                pass
+        # Secondary: validate the Host header to defend against DNS-rebinding.
         host_header = request.headers.get("host", "")
-        allowed = {
-            f"127.0.0.1:{settings.port}",
-            f"localhost:{settings.port}",
-        }
-        if host_header not in allowed:
+        if host_header not in {f"127.0.0.1:{settings.port}", f"localhost:{settings.port}"}:
             return Response("Forbidden: remote access not allowed", status_code=403)
         return await call_next(request)
 
