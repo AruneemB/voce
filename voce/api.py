@@ -4,7 +4,9 @@ import sqlite3
 from contextlib import asynccontextmanager
 from typing import Annotated, Optional
 
-from fastapi import Depends, FastAPI, Query
+import asyncio
+
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from pydantic import BaseModel
@@ -14,6 +16,7 @@ from starlette.responses import FileResponse, Response
 
 from voce.config import settings
 from voce.db import bootstrap_schema, get_connection
+from voce.feeds import refresh_all_feeds
 
 SECTION_LABELS: dict[str, str] = {
     "physics": "Physics",
@@ -198,3 +201,68 @@ def list_articles(
         for r in rows
     ]
     return PaginatedArticles(items=items, total=total, limit=limit, offset=offset)
+
+
+@app.get("/api/articles/{article_id}", response_model=ArticleDetailOut)
+def get_article(article_id: str, conn: ConnDep) -> ArticleDetailOut:
+    row = conn.execute(
+        "SELECT a.id, a.section, a.title, a.author, a.published_at, a.url, "
+        "a.summary, a.quanta_audio_url, a.body_text, COALESCE(rs.status, 'unread') AS status "
+        "FROM articles a "
+        "LEFT JOIN reading_state rs ON rs.article_id = a.id "
+        "WHERE a.id = ?",
+        (article_id,),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Article not found")
+    return ArticleDetailOut(
+        id=row["id"],
+        section=row["section"],
+        title=row["title"],
+        author=row["author"],
+        published_at=row["published_at"],
+        url=row["url"],
+        summary=row["summary"],
+        status=row["status"],
+        quanta_audio_url=row["quanta_audio_url"],
+        body_text=row["body_text"],
+    )
+
+
+@app.get("/api/topics", response_model=list[TopicOut])
+def list_topics(
+    conn: ConnDep,
+    section: Optional[str] = Query(None),
+) -> list[TopicOut]:
+    if section:
+        rows = conn.execute(
+            "SELECT at.topic AS slug, COUNT(*) AS article_count "
+            "FROM article_topics at "
+            "JOIN articles a ON a.id = at.article_id "
+            "WHERE a.section = ? "
+            "GROUP BY at.topic "
+            "ORDER BY at.topic",
+            (section,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT topic AS slug, COUNT(*) AS article_count "
+            "FROM article_topics "
+            "GROUP BY topic "
+            "ORDER BY topic"
+        ).fetchall()
+    return [
+        TopicOut(
+            slug=r["slug"],
+            label=r["slug"].replace("-", " ").title(),
+            article_count=r["article_count"],
+        )
+        for r in rows
+    ]
+
+
+@app.post("/api/refresh")
+async def refresh(conn: ConnDep) -> dict:
+    loop = asyncio.get_event_loop()
+    results = await loop.run_in_executor(None, refresh_all_feeds, conn)
+    return {slug: list(counts) for slug, counts in results.items()}
