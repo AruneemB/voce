@@ -457,6 +457,20 @@ def test_enrich_article_stores_fetched_html(article_row, mock_client):
     assert row["body_html"] == "<p>Fetched body.</p>"
 
 
+def test_enrich_article_does_not_commit(article_row, mock_client):
+    enrich_article(
+        "art001", "https://example.com/",
+        "<p>Body.</p>", article_row, mock_client,
+    )
+    assert article_row.in_transaction
+
+
+def test_enrich_all_unenriched_commits(mem_conn, mock_client):
+    _insert_article(mem_conn, "x1", body_html="<p>hello</p>")
+    enrich_all_unenriched(mem_conn, mock_client)
+    assert not mem_conn.in_transaction
+
+
 def test_enrich_article_missing_id_returns_false(mem_conn, mock_client):
     ok = enrich_article(
         "nonexistent", "https://example.com/",

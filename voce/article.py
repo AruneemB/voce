@@ -164,7 +164,6 @@ def enrich_article(
         "UPDATE articles SET body_text=?, body_html=? WHERE id=?",
         (full_text, body_html, article_id),
     )
-    conn.commit()
     return True
 
 
@@ -184,4 +183,5 @@ def enrich_all_unenriched(
             success += 1
         else:
             failure += 1
+    conn.commit()
     return success, failure
