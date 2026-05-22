@@ -6,7 +6,7 @@ Voce is a single-process, localhost-only web application. Its architecture is de
 
 ## System overview
 
-```
+```text
 Quanta Magazine RSS feeds
          │
          │  feedparser + httpx
