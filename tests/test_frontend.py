@@ -128,3 +128,150 @@ def test_html_links_app_js(client):
 
 def test_html_links_styles_css(client):
     assert "/static/styles.css" in client.get("/").text
+
+
+# ── JavaScript structure ───────────────────────────────────────────────────────
+
+@pytest.fixture
+def js(client):
+    return client.get("/static/app.js").text
+
+
+def test_js_defines_loadSections(js):
+    assert "function loadSections" in js or "async function loadSections" in js
+
+
+def test_js_defines_loadArticles(js):
+    assert "function loadArticles" in js or "async function loadArticles" in js
+
+
+def test_js_defines_loadArticleDetail(js):
+    assert "function loadArticleDetail" in js or "async function loadArticleDetail" in js
+
+
+def test_js_defines_showToast(js):
+    assert "function showToast" in js
+
+
+def test_js_defines_triggerRefresh(js):
+    assert "function triggerRefresh" in js or "async function triggerRefresh" in js
+
+
+def test_js_has_currentSection(js):
+    assert "currentSection" in js
+
+
+def test_js_has_currentTopic(js):
+    assert "currentTopic" in js
+
+
+def test_js_has_currentStatus(js):
+    assert "currentStatus" in js
+
+
+def test_js_has_currentOffset(js):
+    assert "currentOffset" in js
+
+
+def test_js_page_size_is_30(js):
+    import re
+    assert re.search(r"PAGE_SIZE\s*=\s*30", js)
+
+
+def test_js_references_api_sections(js):
+    assert "/api/sections" in js
+
+
+def test_js_references_api_articles(js):
+    assert "/api/articles" in js
+
+
+def test_js_accesses_items_field(js):
+    assert ".items" in js
+
+
+def test_js_uses_history_pushState(js):
+    assert "history.pushState" in js
+
+
+def test_js_uses_IntersectionObserver(js):
+    assert "IntersectionObserver" in js
+
+
+def test_js_has_DOMContentLoaded(js):
+    assert "DOMContentLoaded" in js
+
+
+# ── CSS structure ─────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def css(client):
+    return client.get("/static/styles.css").text
+
+
+def test_css_has_prose_selector(css):
+    assert ".prose" in css
+
+
+def test_css_prose_max_width_70ch(css):
+    assert "70ch" in css
+
+
+def test_css_prose_font_family_georgia(css):
+    assert "Georgia" in css
+
+
+def test_css_has_article_card_selector(css):
+    assert ".article-card" in css
+
+
+def test_css_article_card_hover_background(css):
+    assert "#f0f9ff" in css
+
+
+def test_css_has_status_badge_selector(css):
+    assert ".status-badge" in css
+
+
+def test_css_has_status_unread(css):
+    assert ".status-unread" in css
+
+
+def test_css_status_unread_colors(css):
+    assert "#dbeafe" in css
+    assert "#1d4ed8" in css
+
+
+def test_css_has_status_queued(css):
+    assert ".status-queued" in css
+
+
+def test_css_status_queued_colors(css):
+    assert "#fef9c3" in css
+    assert "#854d0e" in css
+
+
+def test_css_has_status_listened(css):
+    assert ".status-listened" in css
+
+
+def test_css_status_listened_colors(css):
+    assert "#dcfce7" in css
+    assert "#166534" in css
+
+
+def test_css_has_toast_container(css):
+    assert "#toast-container" in css
+
+
+def test_css_toast_container_is_fixed(css):
+    block = css[css.find("#toast-container"):]
+    assert "fixed" in block
+
+
+def test_css_toast_z_index_9999(css):
+    assert "9999" in css
+
+
+def test_css_has_quanta_link(css):
+    assert ".quanta-link" in css
