@@ -19,6 +19,8 @@ ELEVENLABS_CHAR_LIMIT: int = 2500
 
 
 def chunk_text(text: str, limit: int = ELEVENLABS_CHAR_LIMIT) -> list[str]:
+    if limit <= 0:
+        raise ValueError(f"limit must be a positive integer, got {limit}")
     if len(text) <= limit:
         return [text]
     p = max(
