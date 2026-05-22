@@ -70,12 +70,17 @@ def synthesize_article(article_id: str, conn: sqlite3.Connection) -> Path:
         (article_id,),
     ).fetchone()
     if cache_row is not None:
-        conn.execute(
-            "UPDATE audio_cache SET last_played_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE article_id=?",
-            (article_id,),
-        )
+        cached_path = Path(cache_row["file_path"])
+        if cached_path.exists():
+            conn.execute(
+                "UPDATE audio_cache SET last_played_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE article_id=?",
+                (article_id,),
+            )
+            conn.commit()
+            return cached_path
+        logger.warning("Cached MP3 for article {} is missing from disk; re-synthesising", article_id)
+        conn.execute("DELETE FROM audio_cache WHERE article_id=?", (article_id,))
         conn.commit()
-        return Path(cache_row["file_path"])
 
     full_text = build_preamble(row["title"], row["author"], row["published_at"]) + "\n\n" + row["body_text"]
     if len(full_text) > 50_000:
