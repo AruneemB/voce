@@ -141,13 +141,16 @@ There is no business logic in the API layer. Ingestion, enrichment, and synthesi
 
 ### Frontend — `voce/static/`
 
-A single-page application built with vanilla JavaScript, htmx, and Tailwind CSS (both loaded from CDN). The layout has three columns:
+A single-page application built with vanilla JavaScript, htmx, and Tailwind CSS (both loaded from CDN — no build step). The layout has three columns filling the full viewport height:
 
-- **Header** — wordmark, tagline, search input, refresh button
-- **Left sidebar** — section list with unread counts, topic filter
-- **Main panel** — article list (with infinite scroll via `IntersectionObserver`) or article detail view
+- **Header** (`<header>`) — "Voce" wordmark, tagline "a reading companion for Quanta Magazine", a debounced search input (`#search-input`), and a Refresh button that posts to `POST /api/refresh`
+- **Left sidebar** (`#sidebar`) — section list (`#section-list`) populated from `/api/sections`; status filter buttons (`#state-filters`: All, Unread, Queued, Listened) that filter the article list; topic dropdown (`#topic-filter`)
+- **Article list** — scrollable centre panel (`#article-list`) with article cards, each showing title, author, date, a 200-character summary, and a colour-coded status badge. An `IntersectionObserver` watches `#load-more-sentinel` at the bottom and triggers the next page load automatically.
+- **Article detail** (`#article-detail`) — full article view with title, byline, an "Open in Quanta ↗" link to the original, body text rendered as prose paragraphs, and a reserved `#audio-player-section` element for Phase 8.
 
-Navigation uses `history.pushState` so the browser back button works correctly. Reading status buttons trigger `POST /api/articles/{id}/state` directly. The audio player appears in the detail view once synthesis completes.
+Navigation uses `history.pushState` so the URL reflects the selected article (`#article/{id}`). On page load, `location.hash` is checked to resolve deep links. Toast notifications (errors, success confirmations) are appended to `#toast-container` and auto-dismissed after four seconds.
+
+The audio player UI and reading status mutation buttons are not part of this phase — they are wired in Phase 8 and Phase 9 respectively.
 
 ---
 
