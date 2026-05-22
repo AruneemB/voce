@@ -95,6 +95,8 @@ You should see the Voce interface load within a few seconds. The initial feed re
 
 **Article list** — Article cards populate the centre panel. Each card shows the title, author, publication date, a 200-character summary excerpt, and a colour-coded reading status badge (blue for unread, yellow for queued, green for listened). Scroll to the bottom of the list to automatically load the next page.
 
+**Topic filter** — A dropdown below the status filters narrows the article list to a single topic (e.g. "Black Holes", "Quantum Mechanics"). Select "All topics" to clear the filter. The dropdown is populated from `/api/topics` and updates the article list immediately on change.
+
 **Search** — Typing in the search box in the header filters articles using full-text search. The search is debounced by 300 ms and updates the article list as you type. Clearing the search box restores the full article list.
 
 **Article detail** — Clicking an article card opens the full article in the right panel. The URL in your browser's address bar updates to `#article/{id}`, so you can bookmark or navigate directly to any article. An "Open in Quanta ↗" link at the top opens the original article on Quanta Magazine in a new tab. The body text is rendered as clean prose.
@@ -114,6 +116,7 @@ A working setup satisfies all of the following:
 - Clicking an article card shows the article detail pane with prose body text and an "Open in Quanta ↗" link
 - The URL updates to `#article/{id}` when an article is selected, and navigating to that URL directly opens the article
 - Scrolling to the bottom of the article list loads the next page automatically
+- The topic filter dropdown narrows the article list to a single topic and updates immediately on selection
 - Typing in the search box filters articles in real time
 
 ---
