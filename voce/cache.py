@@ -13,8 +13,12 @@ from voce.config import settings
 def sweep_expired_cache(conn: sqlite3.Connection, ttl_days: int | None = None) -> int:
     if ttl_days is None:
         ttl_days = settings.audio_cache_ttl_days
+    ttl_days = int(ttl_days)
+    if ttl_days < 0:
+        raise ValueError(f"ttl_days must be non-negative, got {ttl_days}")
     rows = conn.execute(
-        "SELECT article_id, file_path FROM audio_cache WHERE last_played_at < datetime('now', ?)",
+        "SELECT article_id, file_path FROM audio_cache"
+        " WHERE datetime(last_played_at) < datetime('now', ?)",
         (f"-{ttl_days} days",),
     ).fetchall()
     ids = []
