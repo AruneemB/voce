@@ -176,7 +176,7 @@ def get_audio_duration(mp3_bytes: bytes) -> float: ...
 def synthesize_article(article_id: str, conn: sqlite3.Connection) -> Path: ...
 ```
 
-`chunk_text()` splits at sentence boundaries (`". "`, `"! "`, `"? "`) first, then at the last space within the limit, and finally performs a hard character-count split as a last resort. It never splits inside a word and filters empty strings from the result.
+`chunk_text()` splits at sentence boundaries (`". "`, `"! "`, `"? "`) first, then at the last space within the limit, and falls back to a hard character-count split only when no whitespace exists within the limit. This last resort may split an oversized single token. Empty strings are filtered from the result.
 
 `synthesize_chunk()` calls `client.text_to_speech.convert()` with the configured voice and model IDs. It collects the returned bytes iterator with `b"".join(...)`. On any exception from ElevenLabs it raises `TTSSynthesisError(article_id="unknown", cause=exc)`.
 
@@ -184,7 +184,7 @@ def synthesize_article(article_id: str, conn: sqlite3.Connection) -> Path: ...
 
 `synthesize_article()` is the full pipeline:
 1. Queries the article by ID; raises `ArticleNotFoundError` if missing, `ArticleTextMissingError` if `body_text` is empty.
-2. Checks `audio_cache` — if a cached entry exists, updates `last_played_at` and returns the cached path immediately (no ElevenLabs call).
+2. Checks `audio_cache` — if a cached entry exists **and the MP3 file is present on disk**, updates `last_played_at` and returns the cached path immediately (no ElevenLabs call). If the row exists but the file is missing, the stale row is deleted and synthesis proceeds normally.
 3. Builds the full narration text: `build_preamble(title, author, published_at) + "\n\n" + body_text`.
 4. Enforces the 50,000-character cost guard; raises `ArticleTextMissingError` if exceeded.
 5. Chunks, synthesises, concatenates, writes the MP3 to `settings.audio_cache_dir/{article_id}.mp3`, inserts the `audio_cache` row, and returns the path.
@@ -200,7 +200,7 @@ def sweep_expired_cache(conn: sqlite3.Connection, ttl_days: int | None = None) -
 def get_cache_stats(conn: sqlite3.Connection) -> dict: ...
 ```
 
-`sweep_expired_cache()` deletes `audio_cache` rows where `last_played_at` is older than `ttl_days` ago. `ttl_days` defaults to `settings.audio_cache_ttl_days` when not provided. The corresponding MP3 file is deleted from disk (silently skipped if already missing) before the row is removed. Returns the count of entries swept.
+`sweep_expired_cache()` deletes `audio_cache` rows where `last_played_at` is older than `ttl_days` ago. `ttl_days` defaults to `settings.audio_cache_ttl_days` when not provided; it is coerced to `int` and must be non-negative (raises `ValueError` otherwise). RFC3339 timestamps stored in `last_played_at` are normalised via SQLite's `datetime()` before comparison to avoid lexicographic ordering errors. The corresponding MP3 file is deleted from disk (silently skipped if already missing) before the row is removed. Returns the count of entries swept.
 
 `get_cache_stats()` returns a dict with three keys:
 
