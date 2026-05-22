@@ -84,6 +84,109 @@ async function loadArticleDetail(articleId) {
   }
 }
 
+// ── Toast ─────────────────────────────────────────────────────────────────────
+function showToast(message, type = 'info') {
+  const colors = {
+    error: 'background:#ef4444;color:#fff',
+    success: 'background:#22c55e;color:#fff',
+    info: 'background:#3b82f6;color:#fff',
+  };
+  const div = document.createElement('div');
+  div.style.cssText = `${colors[type] || colors.info};padding:0.5rem 1rem;border-radius:0.375rem;box-shadow:0 2px 8px rgba(0,0,0,0.15);font-size:0.875rem;font-weight:500`;
+  div.textContent = message;
+  document.getElementById('toast-container').appendChild(div);
+  setTimeout(() => div.remove(), 4000);
+}
+
+// ── Refresh ───────────────────────────────────────────────────────────────────
+async function triggerRefresh() {
+  try {
+    const res = await fetch('/api/refresh', { method: 'POST' });
+    if (!res.ok) throw new Error('refresh failed');
+    showToast('Feed refreshed', 'success');
+    loadSections();
+    loadArticles(true);
+  } catch (e) {
+    showToast('Failed to refresh feed', 'error');
+  }
+}
+
+// ── Debounced Search ──────────────────────────────────────────────────────────
+let _searchTimer = null;
+
+function setupSearch() {
+  document.getElementById('search-input').addEventListener('input', e => {
+    clearTimeout(_searchTimer);
+    _searchTimer = setTimeout(async () => {
+      const q = e.target.value.trim();
+      if (!q) {
+        loadArticles(true);
+        return;
+      }
+      const list = document.getElementById('article-list');
+      list.innerHTML = '';
+      currentOffset = 0;
+      try {
+        let res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+        if (res.status === 404) {
+          res = await fetch(`/api/articles?q=${encodeURIComponent(q)}&limit=${PAGE_SIZE}&offset=0`);
+        }
+        if (!res.ok) throw new Error('search failed');
+        const data = await res.json();
+        const items = Array.isArray(data) ? data : (data.items || []);
+        items.forEach(article => {
+          const card = document.createElement('div');
+          card.className = 'article-card';
+          card.dataset.articleId = article.id;
+          card.setAttribute('role', 'button');
+          card.setAttribute('tabindex', '0');
+          const summary = article.summary ? article.summary.slice(0, 200) : '';
+          card.innerHTML = `
+            <div class="article-card-title text-sm font-semibold leading-snug">${article.title}</div>
+            <div class="article-card-meta text-xs text-gray-500 mt-0.5">${article.author || ''} · ${formatDate(article.published_at)}</div>
+            <div class="article-card-summary text-xs text-gray-500 mt-1 leading-snug">${summary}${summary.length === 200 ? '…' : ''}</div>
+            <span class="status-badge status-${article.status} mt-1">${article.status}</span>
+          `;
+          card.addEventListener('click', () => loadArticleDetail(article.id));
+          list.appendChild(card);
+        });
+      } catch (e) {
+        showToast('Search failed', 'error');
+      }
+    }, 300);
+  });
+}
+
+// ── Initialisation ────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  loadSections();
+  loadArticles(true);
+
+  // Infinite scroll
+  const sentinel = document.getElementById('load-more-sentinel');
+  new IntersectionObserver(entries => {
+    if (entries[0].isIntersecting) loadArticles(false);
+  }, { threshold: 0.1 }).observe(sentinel);
+
+  // State filter buttons
+  document.getElementById('state-filters').addEventListener('click', e => {
+    const btn = e.target.closest('[data-status]');
+    if (!btn) return;
+    document.querySelectorAll('#state-filters button').forEach(b => b.classList.remove('bg-blue-100', 'text-blue-800', 'font-semibold'));
+    btn.classList.add('bg-blue-100', 'text-blue-800', 'font-semibold');
+    currentStatus = btn.dataset.status || null;
+    currentOffset = 0;
+    loadArticles(true);
+  });
+
+  // Search
+  setupSearch();
+
+  // Deep-link via hash
+  const match = location.hash.match(/^#article\/(.+)$/);
+  if (match) loadArticleDetail(match[1]);
+});
+
 // ── Sections ──────────────────────────────────────────────────────────────────
 async function loadSections() {
   try {
