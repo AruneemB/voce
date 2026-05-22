@@ -296,30 +296,41 @@ CDN script tags use the exact URLs and integrity attributes required by the spec
 All application behaviour. Module-level state and public functions:
 
 ```javascript
-// Mutable state — reset between navigation actions
+// Mutable filter state — reset between navigation actions
 let currentSection = null;   // active section slug, or null (all sections)
-let currentTopic   = null;   // active topic slug, or null
+let currentTopic   = null;   // active topic slug, or null; driven by #topic-filter
 let currentStatus  = null;   // "unread" | "queued" | "listened" | null
 let currentOffset  = 0;      // pagination cursor; reset to 0 on filter change
 const PAGE_SIZE = 30;        // results per page, matches API default
+
+// Pagination guards — prevent duplicate in-flight fetches and over-fetching
+let isLoadingArticles = false;  // true while a loadArticles fetch is in flight
+let hasMoreArticles   = true;   // false once the API returns fewer than PAGE_SIZE items
+
+// Security
+const VALID_STATUSES = new Set(['unread', 'queued', 'listened']);
 ```
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
+| `escapeHtml` | `(value) → string` | Encodes `&`, `<`, `>`, `"`, `'` as HTML entities. Applied to every API-sourced string before injection into `innerHTML`. |
 | `loadSections` | `async () → void` | Fetches `/api/sections`, renders `<li><button data-section="{slug}">` items with unread badge counts into `#section-list`. Section click sets `currentSection` and calls `loadArticles(true)`. |
-| `loadArticles` | `async (reset = true) → void` | Fetches `/api/articles` with current filter params. `reset = true` clears `#article-list` and resets `currentOffset`; `reset = false` appends (infinite scroll). Renders article cards with title, meta line, 200-char summary, and status badge. |
-| `loadArticleDetail` | `async (articleId) → void` | Fetches `/api/articles/{id}`, renders title, byline, "Open in Quanta ↗" link, `#audio-player-section` slot, and prose body (body_text split on `\n\n` into `<p>` tags) into `#article-detail`. Calls `history.pushState`. |
+| `loadArticles` | `async (reset = true) → void` | Guarded by `isLoadingArticles` (drops concurrent calls) and `hasMoreArticles` (stops requesting once the last page is received). Fetches `/api/articles` with current filter params. `reset = true` clears `#article-list`, resets `currentOffset`, and restores `hasMoreArticles`. Appends article cards and advances `currentOffset` by the actual item count returned. |
+| `loadArticleDetail` | `async (articleId) → void` | Fetches `/api/articles/{id}`, renders title, byline, "Open in Quanta ↗" link, `#audio-player-section` slot, and prose body (`body_text` split on `\n\n`, each paragraph HTML-escaped) into `#article-detail`. Calls `history.pushState`. |
 | `showToast` | `(message, type) → void` | Creates a coloured `<div>` (red for `"error"`, green for `"success"`, blue for `"info"`) in `#toast-container`. Auto-removes after 4000 ms via `setTimeout`. |
 | `triggerRefresh` | `async () → void` | Posts to `/api/refresh`, shows a success or error toast, then reloads sections and articles. |
+
+All article fields injected via `innerHTML` (`title`, `author`, `summary`, `body_text`, `display_name`) are passed through `escapeHtml()`. Status values used in CSS class names are validated against `VALID_STATUSES` before interpolation; any unrecognised status falls back to `"unread"`.
 
 The `DOMContentLoaded` handler wires together:
 
 1. `loadSections()` — initial section list
 2. `loadArticles(true)` — initial article list
-3. `IntersectionObserver` on `#load-more-sentinel` → `loadArticles(false)` when sentinel enters viewport
+3. `IntersectionObserver` on `#load-more-sentinel` → `loadArticles(false)` when sentinel enters viewport (guard prevents duplicate loads)
 4. `#state-filters` click delegation → update `currentStatus`, reload articles
-5. `#search-input` input event → 300 ms debounce → fetch `/api/search?q=` (falls back to `/api/articles?q=` on 404) → render results
-6. `location.hash` check → if matches `#article/{id}`, call `loadArticleDetail` immediately
+5. `#topic-filter` change event → update `currentTopic` (empty string coerced to `null` for "All topics"), reset offset, reload articles
+6. `#search-input` input event → 300 ms debounce → fetch `/api/search?q=` (falls back to `/api/articles?q=` on 404) → render results
+7. `location.hash` check → if matches `#article/{id}`, call `loadArticleDetail` immediately
 
 ---
 
