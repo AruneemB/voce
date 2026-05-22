@@ -4,7 +4,75 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Voce</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/htmx.org@1.9.10" integrity="sha384-D1Kt99CQMDuVetoL1lrYwg5t+9QdHe7NLX/SoJYkXDFfX37iInKRy5ViYgSibmK" crossorigin="anonymous"></script>
+  <link rel="stylesheet" href="/static/styles.css">
 </head>
-<body>
+<body class="flex flex-col h-screen overflow-hidden bg-white text-gray-900">
+
+  <!-- Header -->
+  <header class="flex items-center justify-between px-6 py-3 border-b border-gray-200 bg-white shrink-0">
+    <div>
+      <span class="text-2xl font-bold tracking-tight">Voce</span>
+      <p class="text-xs text-gray-500 leading-tight mt-0.5">a reading companion for Quanta Magazine</p>
+    </div>
+    <div class="flex items-center gap-3">
+      <input
+        id="search-input"
+        type="search"
+        placeholder="Search articles…"
+        class="border border-gray-300 rounded-md px-3 py-1.5 text-sm w-56 focus:outline-none focus:ring-2 focus:ring-blue-500"
+      >
+      <button
+        onclick="triggerRefresh()"
+        class="px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+      >Refresh</button>
+    </div>
+  </header>
+
+  <!-- Three-column body -->
+  <div class="flex flex-1 overflow-hidden">
+
+    <!-- Sidebar -->
+    <aside id="sidebar" class="w-52 shrink-0 flex flex-col border-r border-gray-200 overflow-y-auto bg-gray-50">
+      <div class="px-4 pt-4 pb-2">
+        <h2 class="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">Sections</h2>
+        <ul id="section-list" class="space-y-0.5"></ul>
+      </div>
+      <div class="px-4 pt-3 pb-2">
+        <h2 class="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">Status</h2>
+        <div id="state-filters" class="flex flex-col gap-1">
+          <button class="text-left text-sm px-2 py-1 rounded hover:bg-gray-200" data-status="">All</button>
+          <button class="text-left text-sm px-2 py-1 rounded hover:bg-gray-200" data-status="unread">Unread</button>
+          <button class="text-left text-sm px-2 py-1 rounded hover:bg-gray-200" data-status="queued">Queued</button>
+          <button class="text-left text-sm px-2 py-1 rounded hover:bg-gray-200" data-status="listened">Listened</button>
+        </div>
+      </div>
+      <div class="px-4 pt-3 pb-4">
+        <h2 class="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-2">Topic</h2>
+        <select id="topic-filter" class="w-full border border-gray-300 rounded-md px-2 py-1 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <option value="">All topics</option>
+        </select>
+      </div>
+    </aside>
+
+    <!-- Article list -->
+    <div class="w-80 shrink-0 flex flex-col border-r border-gray-200 overflow-y-auto">
+      <div id="article-list"></div>
+      <div id="load-more-sentinel" class="h-8 shrink-0"></div>
+    </div>
+
+    <!-- Article detail -->
+    <article id="article-detail" class="flex-1 overflow-y-auto px-10 py-8">
+      <p class="text-gray-400 text-sm text-center mt-16">Select an article to read.</p>
+    </article>
+
+  </div>
+
+  <!-- Toast container -->
+  <div id="toast-container"></div>
+
+  <script src="/static/app.js"></script>
 </body>
 </html>
