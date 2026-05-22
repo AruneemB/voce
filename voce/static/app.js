@@ -9,6 +9,12 @@ const PAGE_SIZE = 30;
 // from API responses so that unexpected values cannot inject arbitrary classes.
 const VALID_STATUSES = new Set(['unread', 'queued', 'listened']);
 
+// Pagination guards — prevent IntersectionObserver from firing a second load
+// while a fetch is already in flight, and stop requesting once the last page
+// has been received.
+let isLoadingArticles = false;
+let hasMoreArticles = true;
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function formatDate(iso) {
   if (!iso) return '';
@@ -26,11 +32,15 @@ function escapeHtml(value = '') {
 
 // ── Articles ──────────────────────────────────────────────────────────────────
 async function loadArticles(reset = true) {
+  if (isLoadingArticles) return;
   const list = document.getElementById('article-list');
   if (reset) {
     list.innerHTML = '';
     currentOffset = 0;
+    hasMoreArticles = true;
   }
+  if (!hasMoreArticles) return;
+  isLoadingArticles = true;
 
   const params = new URLSearchParams({ limit: PAGE_SIZE, offset: currentOffset });
   if (currentSection) params.set('section', currentSection);
@@ -41,7 +51,8 @@ async function loadArticles(reset = true) {
     const res = await fetch(`/api/articles?${params}`);
     if (!res.ok) throw new Error('articles fetch failed');
     const data = await res.json();
-    data.items.forEach(article => {
+    const items = Array.isArray(data.items) ? data.items : [];
+    items.forEach(article => {
       const card = document.createElement('div');
       card.className = 'article-card';
       card.dataset.articleId = article.id;
@@ -61,9 +72,12 @@ async function loadArticles(reset = true) {
       });
       list.appendChild(card);
     });
-    currentOffset += PAGE_SIZE;
+    currentOffset += items.length;
+    hasMoreArticles = items.length === PAGE_SIZE;
   } catch (e) {
     showToast('Failed to load articles', 'error');
+  } finally {
+    isLoadingArticles = false;
   }
 }
 
