@@ -275,3 +275,74 @@ def test_css_toast_z_index_9999(css):
 
 def test_css_has_quanta_link(css):
     assert ".quanta-link" in css
+
+
+# ── XSS mitigations ───────────────────────────────────────────────────────────
+
+def test_js_defines_escapeHtml(js):
+    assert "function escapeHtml" in js
+
+
+def test_js_escapeHtml_encodes_lt(js):
+    assert "'&lt;'" in js or '"&lt;"' in js
+
+
+def test_js_escapeHtml_encodes_gt(js):
+    assert "'&gt;'" in js or '"&gt;"' in js
+
+
+def test_js_escapeHtml_encodes_amp(js):
+    assert "'&amp;'" in js or '"&amp;"' in js
+
+
+def test_js_has_VALID_STATUSES(js):
+    assert "VALID_STATUSES" in js
+
+
+def test_js_uses_escapeHtml_on_title(js):
+    assert "escapeHtml(article.title)" in js
+
+
+def test_js_uses_escapeHtml_on_author(js):
+    assert "escapeHtml(article.author" in js
+
+
+def test_js_uses_escapeHtml_on_body_text(js):
+    assert "escapeHtml(p.trim())" in js or "escapeHtml(article.body_text" in js
+
+
+# ── Pagination guard ──────────────────────────────────────────────────────────
+
+def test_js_has_isLoadingArticles_flag(js):
+    assert "isLoadingArticles" in js
+
+
+def test_js_has_hasMoreArticles_flag(js):
+    assert "hasMoreArticles" in js
+
+
+def test_js_loadArticles_has_finally_block(js):
+    assert "finally" in js
+
+
+def test_js_offset_uses_items_length(js):
+    assert "items.length" in js
+
+
+# ── Topic filter wiring ───────────────────────────────────────────────────────
+
+def test_js_topic_filter_change_listener(js):
+    assert "topic-filter" in js
+    assert "addEventListener" in js
+
+
+def test_js_currentTopic_updated_on_change(js):
+    assert "currentTopic" in js
+    assert "e.target.value" in js
+
+
+# ── Accessibility ─────────────────────────────────────────────────────────────
+
+def test_html_search_input_has_aria_label(client):
+    html = client.get("/").text
+    assert 'aria-label="Search articles"' in html
