@@ -114,7 +114,7 @@ When a user requests audio for an article, the synthesis pipeline:
 1. Checks the `audio_cache` table — if an MP3 already exists for this article, `last_played_at` is updated and the cached path is returned immediately (no ElevenLabs call)
 2. Builds the full narration text as `build_preamble(title, author, published_at) + "\n\n" + body_text`
 3. Enforces the 50,000-character cost guard — articles exceeding this limit are refused with `ArticleTextMissingError` to prevent runaway ElevenLabs API spend
-4. Chunks the text — the ElevenLabs API has a 2,500-character per-request limit; `chunk_text()` splits at sentence boundaries (`". "`, `"! "`, `"? "`) first, then at the last space within the limit, and finally performs a hard character-count split as a last resort — it never splits mid-word
+4. Chunks the text — the ElevenLabs API has a 2,500-character per-request limit; `chunk_text()` splits at sentence boundaries (`". "`, `"! "`, `"? "`) first, then at the last space within the limit, and finally falls back to a hard character-count split when no whitespace exists within the limit (this last resort may split an oversized single token)
 5. Synthesises each chunk — calls `client.text_to_speech.convert()` with the configured voice and model IDs, collecting MP3 bytes; raises `TTSSynthesisError` on failure
 6. Concatenates chunks — assembles a single MP3 file written to `data/audio_cache/{article_id}.mp3`
 7. Reads the audio duration via `mutagen` and records the `audio_cache` row with the file path, voice ID, and duration in seconds
