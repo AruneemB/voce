@@ -5,10 +5,23 @@ let currentStatus = null;
 let currentOffset = 0;
 const PAGE_SIZE = 30;
 
+// Allowed reading-status values — used to whitelist CSS class names derived
+// from API responses so that unexpected values cannot inject arbitrary classes.
+const VALID_STATUSES = new Set(['unread', 'queued', 'listened']);
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function formatDate(iso) {
   if (!iso) return '';
   return iso.slice(0, 10);
+}
+
+function escapeHtml(value = '') {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
 }
 
 // ── Articles ──────────────────────────────────────────────────────────────────
@@ -35,11 +48,12 @@ async function loadArticles(reset = true) {
       card.setAttribute('role', 'button');
       card.setAttribute('tabindex', '0');
       const summary = article.summary ? article.summary.slice(0, 200) : '';
+      const status = VALID_STATUSES.has(article.status) ? article.status : 'unread';
       card.innerHTML = `
-        <div class="article-card-title text-sm font-semibold leading-snug">${article.title}</div>
-        <div class="article-card-meta text-xs text-gray-500 mt-0.5">${article.author || ''} · ${formatDate(article.published_at)}</div>
-        <div class="article-card-summary text-xs text-gray-500 mt-1 leading-snug">${summary}${summary.length === 200 ? '…' : ''}</div>
-        <span class="status-badge status-${article.status} mt-1">${article.status}</span>
+        <div class="article-card-title text-sm font-semibold leading-snug">${escapeHtml(article.title)}</div>
+        <div class="article-card-meta text-xs text-gray-500 mt-0.5">${escapeHtml(article.author || '')} · ${formatDate(article.published_at)}</div>
+        <div class="article-card-summary text-xs text-gray-500 mt-1 leading-snug">${escapeHtml(summary)}${summary.length === 200 ? '…' : ''}</div>
+        <span class="status-badge status-${status} mt-1">${escapeHtml(status)}</span>
       `;
       card.addEventListener('click', () => loadArticleDetail(article.id));
       card.addEventListener('keydown', e => {
@@ -67,13 +81,13 @@ async function loadArticleDetail(articleId) {
     const paragraphs = (article.body_text || '')
       .split('\n\n')
       .filter(p => p.trim())
-      .map(p => `<p>${p.trim()}</p>`)
+      .map(p => `<p>${escapeHtml(p.trim())}</p>`)
       .join('');
 
     document.getElementById('article-detail').innerHTML = `
-      <h1 class="text-2xl font-bold leading-tight mb-2">${article.title}</h1>
-      <p class="byline text-sm text-gray-500 mb-4">${article.author || ''} · ${formatDate(article.published_at)}</p>
-      <a href="${article.url}" target="_blank" rel="noopener" class="quanta-link">Open in Quanta ↗</a>
+      <h1 class="text-2xl font-bold leading-tight mb-2">${escapeHtml(article.title)}</h1>
+      <p class="byline text-sm text-gray-500 mb-4">${escapeHtml(article.author || '')} · ${formatDate(article.published_at)}</p>
+      <a href="${escapeHtml(article.url)}" target="_blank" rel="noopener" class="quanta-link">Open in Quanta ↗</a>
       <div id="audio-player-section"></div>
       <div class="prose">${paragraphs}</div>
     `;
@@ -141,11 +155,12 @@ function setupSearch() {
           card.setAttribute('role', 'button');
           card.setAttribute('tabindex', '0');
           const summary = article.summary ? article.summary.slice(0, 200) : '';
+          const status = VALID_STATUSES.has(article.status) ? article.status : 'unread';
           card.innerHTML = `
-            <div class="article-card-title text-sm font-semibold leading-snug">${article.title}</div>
-            <div class="article-card-meta text-xs text-gray-500 mt-0.5">${article.author || ''} · ${formatDate(article.published_at)}</div>
-            <div class="article-card-summary text-xs text-gray-500 mt-1 leading-snug">${summary}${summary.length === 200 ? '…' : ''}</div>
-            <span class="status-badge status-${article.status} mt-1">${article.status}</span>
+            <div class="article-card-title text-sm font-semibold leading-snug">${escapeHtml(article.title)}</div>
+            <div class="article-card-meta text-xs text-gray-500 mt-0.5">${escapeHtml(article.author || '')} · ${formatDate(article.published_at)}</div>
+            <div class="article-card-summary text-xs text-gray-500 mt-1 leading-snug">${escapeHtml(summary)}${summary.length === 200 ? '…' : ''}</div>
+            <span class="status-badge status-${status} mt-1">${escapeHtml(status)}</span>
           `;
           card.addEventListener('click', () => loadArticleDetail(article.id));
           list.appendChild(card);
@@ -200,7 +215,7 @@ async function loadSections() {
       const btn = document.createElement('button');
       btn.className = 'w-full text-left px-2 py-1.5 text-sm rounded hover:bg-gray-200 flex justify-between items-center';
       btn.dataset.section = item.section;
-      btn.innerHTML = `<span>${item.display_name}</span><span class="badge text-xs bg-gray-300 text-gray-700 rounded-full px-1.5 ml-1">${item.unread_count}</span>`;
+      btn.innerHTML = `<span>${escapeHtml(item.display_name)}</span><span class="badge text-xs bg-gray-300 text-gray-700 rounded-full px-1.5 ml-1">${item.unread_count}</span>`;
       btn.addEventListener('click', () => {
         list.querySelectorAll('button').forEach(b => b.classList.remove('active', 'bg-blue-100', 'text-blue-800', 'font-semibold'));
         btn.classList.add('active', 'bg-blue-100', 'text-blue-800', 'font-semibold');
