@@ -150,7 +150,9 @@ A single-page application built with vanilla JavaScript, htmx, and Tailwind CSS 
 
 Navigation uses `history.pushState` so the URL reflects the selected article (`#article/{id}`). On page load, `location.hash` is checked to resolve deep links. Toast notifications (errors, success confirmations) are appended to `#toast-container` and auto-dismissed after four seconds.
 
-The audio player UI and reading status mutation buttons are not part of this phase — they are wired in Phase 8 and Phase 9 respectively.
+**XSS protection** — Every API-sourced string injected into `innerHTML` is passed through `escapeHtml()`, which encodes `&`, `<`, `>`, `"`, and `'` as HTML entities. Reading status strings used in CSS class names are validated against a `VALID_STATUSES` whitelist (`"unread"`, `"queued"`, `"listened"`) before interpolation; any unrecognised value falls back to `"unread"` rather than being used as-is. This ensures that malicious content in article titles, author names, or summaries cannot execute as HTML or JavaScript.
+
+The audio player UI and reading status mutation buttons are not yet implemented — they are planned for later phases.
 
 ---
 
