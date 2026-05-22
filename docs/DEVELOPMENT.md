@@ -37,6 +37,8 @@ The test suite is in `tests/`. Tests are organised by module:
 | `test_article.py` | HTML cleaning, LaTeX substitutions, preamble format |
 | `test_api.py` | FastAPI routes, middleware, response shapes |
 | `test_frontend.py` | Static file serving, HTML element IDs, CDN tags, JS function definitions, CSS selectors |
+| `test_tts_chunking.py` | `chunk_text` boundary algorithm, `synthesize_article` pipeline (ElevenLabs mocked) |
+| `test_cache.py` | `sweep_expired_cache` expiry logic and file deletion, `get_cache_stats` aggregates |
 
 Fixtures live in `tests/fixtures/`. The RSS fixture (`sample_feed.xml`) contains three representative entries covering normal articles, missing fields, and audio enclosures.
 
