@@ -36,6 +36,7 @@ The test suite is in `tests/`. Tests are organised by module:
 | `test_feeds.py` | RSS parsing, upsert logic, retry behaviour |
 | `test_article.py` | HTML cleaning, LaTeX substitutions, preamble format |
 | `test_api.py` | FastAPI routes, middleware, response shapes |
+| `test_frontend.py` | Static file serving, HTML element IDs, CDN tags, JS function definitions, CSS selectors |
 
 Fixtures live in `tests/fixtures/`. The RSS fixture (`sample_feed.xml`) contains three representative entries covering normal articles, missing fields, and audio enclosures.
 
@@ -47,7 +48,9 @@ Tests use real SQLite (in-memory or temporary file) — the database is never mo
 
 Feed tests use the XML fixture rather than making live HTTP requests. HTTP calls are intercepted via `httpx`'s transport mocking.
 
-API tests use FastAPI's `TestClient`. The `LocalhostOnlyMiddleware` is bypassed in tests by overriding the `get_conn` dependency and supplying a test client that does not perform the loopback IP check.
+API and frontend tests both use FastAPI's `TestClient`. All `TestClient` instances supply `headers={"host": "127.0.0.1:8765"}` so that `LocalhostOnlyMiddleware` admits the test requests — this applies to static file requests (`/static/app.js`, `/static/styles.css`) as well as JSON API calls.
+
+Frontend tests verify structure rather than behaviour: they fetch the served files as text and use `in` membership checks (for element IDs, CDN URLs, function names, CSS selectors) and `re.search` (for `PAGE_SIZE = 30`). This approach confirms the files are wired correctly without a JavaScript runtime.
 
 ---
 
@@ -134,15 +137,19 @@ The DDL uses `IF NOT EXISTS` for tables and indexes, so new tables and indexes a
 
 ### Modifying the frontend
 
-The frontend has no build step. Edit the files directly:
+The frontend has no build step. Edit the files directly and reload the browser — the server does not need to restart for static file changes.
 
 | File | Contents |
 |------|----------|
-| `voce/static/index.html` | Structure and layout |
-| `voce/static/app.js` | All JavaScript behaviour |
-| `voce/static/styles.css` | Custom styles beyond Tailwind |
+| `voce/static/index.html` | Layout shell, CDN script tags, element IDs |
+| `voce/static/app.js` | All application behaviour — state, data fetching, DOM rendering |
+| `voce/static/styles.css` | Custom component styles that complement Tailwind utilities |
 
-Reload the browser to see changes. The server does not need to restart for static file changes.
+**Adding a new element ID**: Declare it in `index.html` first, then reference it by ID in `app.js`. If the element is used in JavaScript-generated markup (not in the static shell), no change to `index.html` is needed.
+
+**Adding a new CSS class**: Add it to `styles.css`. Tailwind utility classes are applied inline in `app.js` template literals; `styles.css` is reserved for classes that cannot be expressed as Tailwind utilities (e.g. `.article-card:hover`, `.prose`).
+
+**Testing frontend changes**: `tests/test_frontend.py` verifies that required element IDs, CDN tags, JavaScript function names, and CSS selectors are present in the served files. If you rename a public function or element ID, update the corresponding test assertion.
 
 ---
 
