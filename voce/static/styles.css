@@ -1,0 +1,52 @@
+.prose {
+    max-width: 70ch;
+    line-height: 1.7;
+    font-size: 1.05rem;
+    font-family: Georgia, serif;
+}
+
+.prose p {
+    margin-bottom: 1.2em;
+}
+
+.article-card {
+    cursor: pointer;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid #e5e7eb;
+    transition: background 0.1s;
+}
+
+.article-card:hover, .article-card.active {
+    background: #f0f9ff;
+}
+
+.status-badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 9999px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.status-unread   { background: #dbeafe; color: #1d4ed8; }
+.status-queued   { background: #fef9c3; color: #854d0e; }
+.status-listened { background: #dcfce7; color: #166534; }
+
+#toast-container {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.quanta-link {
+    display: inline-block;
+    margin-bottom: 1rem;
+    font-weight: 600;
+    color: #2563eb;
+    text-decoration: underline;
+}

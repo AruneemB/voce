@@ -26,15 +26,22 @@ The HTML-to-prose pipeline (`article.py`) converts raw article HTML into clean, 
 
 The FastAPI application (`api.py`) exposes all browsing endpoints: sections with unread counts, paginated article lists with section/topic/status/full-text filters, article detail including body text, topic listings, and a feed refresh trigger. The `LocalhostOnlyMiddleware` enforces the localhost-only access policy.
 
-**108 tests pass across Phases 1–5.**
+### Phase 6 — Browser UI
+
+The single-page frontend (`index.html`, `app.js`, `styles.css`) implements a full browsing experience with a three-column layout:
+
+- **Header** — "Voce" wordmark, tagline "a reading companion for Quanta Magazine", a `<input type="search">` with 300 ms debounced search, and a Refresh button that calls `POST /api/refresh`
+- **Left sidebar** (`#sidebar`) — section list (`#section-list`) populated from `/api/sections` with unread badge counts; status filter buttons (`#state-filters`: All, Unread, Queued, Listened); topic dropdown (`#topic-filter`)
+- **Article list** — scrollable panel of article cards rendered from `/api/articles`. Each card shows title, author, date, a 200-character summary excerpt, and a colour-coded reading status badge. Infinite scroll is implemented via `IntersectionObserver` watching the `#load-more-sentinel` element.
+- **Article detail** (`#article-detail`) — full article view with title, byline, an "Open in Quanta ↗" link, and body text rendered as `<p>` tags split on double newlines. A reserved `#audio-player-section` div is present for the Phase 8 audio player.
+
+Navigation state is maintained via `history.pushState`. On load, `location.hash` is parsed so that `#article/{id}` URLs deep-link directly into an article. Tailwind CSS and htmx are loaded from CDN — no build step is required.
+
+**160 tests pass across Phases 1–6** (52 new tests covering static file serving, all nine required element IDs, CDN tag correctness, JavaScript function definitions, state variable declarations, API call patterns, and all CSS selectors and colour values).
 
 ---
 
 ## What is coming
-
-### Phase 6 — Browser UI
-
-The single-page frontend (`index.html`, `app.js`, `styles.css`) with a three-column layout: header with search and refresh, left sidebar with section list and topic filter, main panel with article cards and an infinite-scroll article list. Clicking an article card opens the detail view with full body text. Browser history is maintained via `pushState`.
 
 ### Phase 7 — TTS synthesis
 

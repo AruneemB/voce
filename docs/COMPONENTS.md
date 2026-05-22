@@ -252,3 +252,101 @@ def main() -> None: ...
 ```
 
 Invoked via `python -m voce` or the `voce` console script defined in `pyproject.toml`. Accepts `--host`, `--port`, and `--log-level` flags (with additional flags planned for later phases: `--refresh-now`, `--sweep-cache`, `--no-browser`, `--verbose`). Starts uvicorn pointing at `voce.api:app`.
+
+---
+
+## `voce/static/` — Browser frontend
+
+**Owns:** The complete single-page browsing UI served at `GET /`.
+
+The three files are served as static assets by FastAPI's `StaticFiles` mount at `/static`. The root route (`GET /`) returns `index.html` directly via `FileResponse`. No build tool, bundler, or transpiler is involved — edits to these files are reflected immediately on browser reload.
+
+---
+
+### `index.html`
+
+The application shell. Declares the three-column viewport-filling layout, loads Tailwind CSS and htmx from CDN, and links `styles.css` and `app.js`. All element IDs referenced by `app.js` are declared here:
+
+| ID | Element | Role |
+|----|---------|------|
+| `#sidebar` | `<aside>` | Left sidebar wrapper (sections, status filters, topic dropdown) |
+| `#section-list` | `<ul>` | Section buttons, populated by `loadSections()` |
+| `#state-filters` | `<div>` | All / Unread / Queued / Listened filter buttons |
+| `#topic-filter` | `<select>` | Topic filter dropdown |
+| `#article-list` | `<div>` | Article card container, populated by `loadArticles()` |
+| `#load-more-sentinel` | `<div>` | `IntersectionObserver` target for infinite scroll |
+| `#article-detail` | `<article>` | Article detail view, populated by `loadArticleDetail()` |
+| `#audio-player-section` | `<div>` | Reserved slot for the Phase 8 audio player |
+| `#toast-container` | `<div>` | Fixed-position notification stack |
+| `#search-input` | `<input type="search">` | Debounced full-text search |
+
+CDN script tags use the exact URLs and integrity attributes required by the spec:
+
+```html
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/htmx.org@1.9.10"
+        integrity="sha384-D1Kt99CQMDuVetoL1lrYwg5t+9QdHe7NLX/SoJYkXDFfX37iInKRy5ViYgSibmK"
+        crossorigin="anonymous"></script>
+```
+
+---
+
+### `app.js`
+
+All application behaviour. Module-level state and public functions:
+
+```javascript
+// Mutable filter state — reset between navigation actions
+let currentSection = null;   // active section slug, or null (all sections)
+let currentTopic   = null;   // active topic slug, or null; driven by #topic-filter
+let currentStatus  = null;   // "unread" | "queued" | "listened" | null
+let currentOffset  = 0;      // pagination cursor; reset to 0 on filter change
+const PAGE_SIZE = 30;        // results per page, matches API default
+
+// Pagination guards — prevent duplicate in-flight fetches and over-fetching
+let isLoadingArticles = false;  // true while a loadArticles fetch is in flight
+let hasMoreArticles   = true;   // false once the API returns fewer than PAGE_SIZE items
+
+// Security
+const VALID_STATUSES = new Set(['unread', 'queued', 'listened']);
+```
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `escapeHtml` | `(value) → string` | Encodes `&`, `<`, `>`, `"`, `'` as HTML entities. Applied to every API-sourced string before injection into `innerHTML`. |
+| `loadSections` | `async () → void` | Fetches `/api/sections`, renders `<li><button data-section="{slug}">` items with unread badge counts into `#section-list`. Section click sets `currentSection` and calls `loadArticles(true)`. |
+| `loadArticles` | `async (reset = true) → void` | Guarded by `isLoadingArticles` (drops concurrent calls) and `hasMoreArticles` (stops requesting once the last page is received). Fetches `/api/articles` with current filter params. `reset = true` clears `#article-list`, resets `currentOffset`, and restores `hasMoreArticles`. Appends article cards and advances `currentOffset` by the actual item count returned. |
+| `loadArticleDetail` | `async (articleId) → void` | Fetches `/api/articles/{id}`, renders title, byline, "Open in Quanta ↗" link, `#audio-player-section` slot, and prose body (`body_text` split on `\n\n`, each paragraph HTML-escaped) into `#article-detail`. Calls `history.pushState`. |
+| `showToast` | `(message, type) → void` | Creates a coloured `<div>` (red for `"error"`, green for `"success"`, blue for `"info"`) in `#toast-container`. Auto-removes after 4000 ms via `setTimeout`. |
+| `triggerRefresh` | `async () → void` | Posts to `/api/refresh`, shows a success or error toast, then reloads sections and articles. |
+
+All article fields injected via `innerHTML` (`title`, `author`, `summary`, `body_text`, `display_name`) are passed through `escapeHtml()`. Status values used in CSS class names are validated against `VALID_STATUSES` before interpolation; any unrecognised status falls back to `"unread"`.
+
+The `DOMContentLoaded` handler wires together:
+
+1. `loadSections()` — initial section list
+2. `loadArticles(true)` — initial article list
+3. `IntersectionObserver` on `#load-more-sentinel` → `loadArticles(false)` when sentinel enters viewport (guard prevents duplicate loads)
+4. `#state-filters` click delegation → update `currentStatus`, reload articles
+5. `#topic-filter` change event → update `currentTopic` (empty string coerced to `null` for "All topics"), reset offset, reload articles
+6. `#search-input` input event → 300 ms debounce → fetch `/api/search?q=` (falls back to `/api/articles?q=` on 404) → render results
+7. `location.hash` check → if matches `#article/{id}`, call `loadArticleDetail` immediately
+
+---
+
+### `styles.css`
+
+Custom component styles that extend Tailwind's utility classes. These classes are used in the JavaScript-generated markup and cannot be expressed as Tailwind utilities alone.
+
+| Selector | Purpose |
+|----------|---------|
+| `.prose` | Serif body typography at `70ch` max-width, `1.7` line-height, `Georgia` font family |
+| `.prose p` | `1.2em` bottom margin between body paragraphs |
+| `.article-card` | Pointer cursor, padded border-bottom rows with `0.1s` hover transition |
+| `.article-card:hover`, `.article-card.active` | `#f0f9ff` background highlight |
+| `.status-badge` | Pill shape — rounded, uppercase, small text — shared by all three status colours |
+| `.status-unread` | Blue pill (`#dbeafe` / `#1d4ed8`) |
+| `.status-queued` | Yellow pill (`#fef9c3` / `#854d0e`) |
+| `.status-listened` | Green pill (`#dcfce7` / `#166534`) |
+| `#toast-container` | `position: fixed`, top-right corner, `z-index: 9999`, flex column with gap |
+| `.quanta-link` | Bold, underlined, blue (`#2563eb`) "Open in Quanta ↗" anchor |

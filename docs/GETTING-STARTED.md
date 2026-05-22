@@ -89,13 +89,19 @@ You should see the Voce interface load within a few seconds. The initial feed re
 
 ## First-run experience
 
-**Sections sidebar** — The left sidebar lists the four Quanta Magazine sections (Physics, Mathematics, Biology, Computer Science). Each shows a count of unread articles. Counts may read zero until the first feed refresh completes.
+**Sections sidebar** — The left sidebar lists the four Quanta Magazine sections (Physics, Mathematics, Biology, Computer Science). Each section button shows a count of unread articles. Counts may read zero until the first feed refresh completes. Clicking a section filters the article list to that section; clicking again while it is active deselects it and returns to all articles.
 
-**Article list** — Clicking a section populates the main panel with article cards. Each card shows the title, author, publication date, and reading status.
+**Status filters** — Below the section list, four buttons (All, Unread, Queued, Listened) filter the article list by reading status. "All" is selected by default.
 
-**Article detail** — Clicking an article card opens the full article view with the cleaned body text. A synthesise button triggers audio generation via ElevenLabs. The first synthesis for any article takes several seconds; subsequent plays stream from the local cache instantly.
+**Article list** — Article cards populate the centre panel. Each card shows the title, author, publication date, a 200-character summary excerpt, and a colour-coded reading status badge (blue for unread, yellow for queued, green for listened). Scroll to the bottom of the list to automatically load the next page.
 
-**Reading status** — Each article can be marked as unread, queued, or listened. Status persists across server restarts.
+**Topic filter** — A dropdown below the status filters narrows the article list to a single topic (e.g. "Black Holes", "Quantum Mechanics"). Select "All topics" to clear the filter. The dropdown is populated from `/api/topics` and updates the article list immediately on change.
+
+**Search** — Typing in the search box in the header filters articles using full-text search. The search is debounced by 300 ms and updates the article list as you type. Clearing the search box restores the full article list.
+
+**Article detail** — Clicking an article card opens the full article in the right panel. The URL in your browser's address bar updates to `#article/{id}`, so you can bookmark or navigate directly to any article. An "Open in Quanta ↗" link at the top opens the original article on Quanta Magazine in a new tab. The body text is rendered as clean prose.
+
+**Refresh** — The Refresh button in the header triggers an immediate feed refresh. A green toast notification confirms the refresh started. New articles appear after a short delay.
 
 ---
 
@@ -103,11 +109,15 @@ You should see the Voce interface load within a few seconds. The initial feed re
 
 A working setup satisfies all of the following:
 
-- The browser opens automatically and shows the Voce header
-- The Physics, Mathematics, Biology, and Computer Science sections appear in the sidebar
-- Article cards appear after a few seconds (the feed refresh completes in the background)
-- Clicking an article card shows the article detail pane with body text
-- Clicking synthesise generates audio and the player appears
+- The browser opens automatically and shows the Voce header with the wordmark and tagline
+- The Physics, Mathematics, Biology, and Computer Science sections appear in the sidebar with unread counts
+- Article cards appear after a few seconds (the initial feed refresh completes in the background)
+- Clicking a section button filters the article list to that section
+- Clicking an article card shows the article detail pane with prose body text and an "Open in Quanta ↗" link
+- The URL updates to `#article/{id}` when an article is selected, and navigating to that URL directly opens the article
+- Scrolling to the bottom of the article list loads the next page automatically
+- The topic filter dropdown narrows the article list to a single topic and updates immediately on selection
+- Typing in the search box filters articles in real time
 
 ---
 
@@ -127,4 +137,4 @@ python -m voce --port 9000
 The feed refresh is still in progress. Wait 15–30 seconds and refresh the page. If articles still do not appear, check the terminal for any `ERROR` log lines from the feed ingestion step.
 
 **Browser does not open automatically**
-Voce calls `webbrowser.open()` on startup. If your environment does not support this, navigate manually to `http://127.0.0.1:8765`. Use `--no-browser` to suppress the auto-open permanently.
+Navigate manually to `http://127.0.0.1:8765`. Use `--no-browser` to suppress the auto-open on future starts.
