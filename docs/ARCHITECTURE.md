@@ -111,14 +111,15 @@ See [DATABASE.md](DATABASE.md) for complete schema documentation.
 
 When a user requests audio for an article, the synthesis pipeline:
 
-1. Checks the `audio_cache` table — if an MP3 already exists for this article and voice, it is returned immediately
-2. Measures article length — articles exceeding 50,000 characters are refused with a 413 response to prevent runaway ElevenLabs API spend
-3. Chunks the text — the ElevenLabs API has a per-request character limit; `chunk_text()` splits at paragraph boundaries, then sentence boundaries, then word boundaries, never splitting mid-word
-4. Synthesises each chunk — calls the ElevenLabs SDK with the configured voice and model IDs, collecting MP3 bytes
-5. Concatenates chunks — assembles a single MP3 file in `data/audio_cache/{article_id}.mp3`
-6. Records the cache entry — writes to `audio_cache` with the file path and duration
+1. Checks the `audio_cache` table — if an MP3 already exists for this article, `last_played_at` is updated and the cached path is returned immediately (no ElevenLabs call)
+2. Builds the full narration text as `build_preamble(title, author, published_at) + "\n\n" + body_text`
+3. Enforces the 50,000-character cost guard — articles exceeding this limit are refused with `ArticleTextMissingError` to prevent runaway ElevenLabs API spend
+4. Chunks the text — the ElevenLabs API has a 2,500-character per-request limit; `chunk_text()` splits at sentence boundaries (`". "`, `"! "`, `"? "`) first, then at the last space within the limit, and finally performs a hard character-count split as a last resort — it never splits mid-word
+5. Synthesises each chunk — calls `client.text_to_speech.convert()` with the configured voice and model IDs, collecting MP3 bytes; raises `TTSSynthesisError` on failure
+6. Concatenates chunks — assembles a single MP3 file written to `data/audio_cache/{article_id}.mp3`
+7. Reads the audio duration via `mutagen` and records the `audio_cache` row with the file path, voice ID, and duration in seconds
 
-The `last_played_at` field in `audio_cache` is updated on every stream request. The cache sweep (`cache.py`) deletes files and rows where `last_played_at` is older than the configured TTL.
+The `last_played_at` field in `audio_cache` is updated on every cache hit. `sweep_expired_cache()` in `cache.py` deletes files and rows where `last_played_at` is older than the configured TTL (default `settings.audio_cache_ttl_days`; the function also accepts an explicit `ttl_days` override).
 
 ### Scheduling — `scheduler.py`
 
