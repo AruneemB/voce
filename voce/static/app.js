@@ -53,6 +53,37 @@ async function loadArticles(reset = true) {
   }
 }
 
+// ── Article Detail ────────────────────────────────────────────────────────────
+async function loadArticleDetail(articleId) {
+  document.querySelectorAll('.article-card').forEach(c => c.classList.remove('active'));
+  const activeCard = document.querySelector(`.article-card[data-article-id="${articleId}"]`);
+  if (activeCard) activeCard.classList.add('active');
+
+  try {
+    const res = await fetch(`/api/articles/${articleId}`);
+    if (!res.ok) throw new Error('detail fetch failed');
+    const article = await res.json();
+
+    const paragraphs = (article.body_text || '')
+      .split('\n\n')
+      .filter(p => p.trim())
+      .map(p => `<p>${p.trim()}</p>`)
+      .join('');
+
+    document.getElementById('article-detail').innerHTML = `
+      <h1 class="text-2xl font-bold leading-tight mb-2">${article.title}</h1>
+      <p class="byline text-sm text-gray-500 mb-4">${article.author || ''} · ${formatDate(article.published_at)}</p>
+      <a href="${article.url}" target="_blank" rel="noopener" class="quanta-link">Open in Quanta ↗</a>
+      <div id="audio-player-section"></div>
+      <div class="prose">${paragraphs}</div>
+    `;
+
+    history.pushState({ articleId }, '', `#article/${articleId}`);
+  } catch (e) {
+    showToast('Failed to load article', 'error');
+  }
+}
+
 // ── Sections ──────────────────────────────────────────────────────────────────
 async function loadSections() {
   try {
