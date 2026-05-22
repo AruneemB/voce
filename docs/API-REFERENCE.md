@@ -2,6 +2,28 @@
 
 Voce exposes a JSON API served by FastAPI on `http://127.0.0.1:8765` by default. All endpoints are read-only except where noted.
 
+## Implementation status
+
+Not all endpoints described in this reference are implemented yet. The table below reflects the current state of the codebase.
+
+| Endpoint | Status | Phase |
+|----------|--------|-------|
+| `GET /` | Implemented | 5 |
+| `GET /api/sections` | Implemented | 5 |
+| `GET /api/articles` | Implemented | 5 |
+| `GET /api/articles/{id}` | Implemented | 5 |
+| `GET /api/topics` | Implemented | 5 |
+| `POST /api/refresh` | Implemented | 5 |
+| `GET /api/articles/{id}/topics` | Planned | 9 |
+| `GET /api/search` | Planned | 10 |
+| `GET /api/queue` | Planned | 9 |
+| `POST /api/articles/{id}/state` | Planned | 9 |
+| `POST /api/articles/{id}/audio` | Planned | 7–8 |
+| `GET /api/articles/{id}/audio/status` | Planned | 7–8 |
+| `GET /api/articles/{id}/audio/stream` | Planned | 7–8 |
+
+> **Note on search:** The frontend (`app.js`) attempts `GET /api/search?q=` first and falls back to `GET /api/articles?q=` on a `404`. This means full-text search works today via the `q` parameter on `/api/articles`. The dedicated `/api/search` endpoint (with richer response metadata) is a Phase 10 addition.
+
 ---
 
 ## Access policy
@@ -155,7 +177,7 @@ All fields from the article summary, plus:
 
 ---
 
-### `GET /api/articles/{article_id}/topics`
+### `GET /api/articles/{article_id}/topics` _(planned — Phase 9)_
 
 Returns the topic tags associated with a single article.
 
@@ -201,9 +223,11 @@ Returns all topics across the article catalogue, with article counts.
 
 ## Search
 
-### `GET /api/search`
+### `GET /api/search` _(planned — Phase 10)_
 
 Full-text search across article titles and body text.
+
+> **Current behaviour:** Full-text search is available today via the `q` parameter on `GET /api/articles` (e.g. `/api/articles?q=black+holes`). The frontend falls back to this endpoint when `/api/search` returns 404. The dedicated `/api/search` endpoint will expose richer response metadata and may support additional filtering options.
 
 **Query parameters**
 
@@ -221,7 +245,7 @@ Voce uses SQLite's FTS5 engine for efficient full-text search. If the FTS query 
 
 ## Queue
 
-### `GET /api/queue`
+### `GET /api/queue` _(planned — Phase 9)_
 
 Returns all articles currently marked as `queued`, ordered by when they were queued (most recent first).
 
@@ -231,7 +255,7 @@ Returns all articles currently marked as `queued`, ordered by when they were que
 
 ## Reading state
 
-### `POST /api/articles/{article_id}/state`
+### `POST /api/articles/{article_id}/state` _(planned — Phase 9)_
 
 Updates the reading status of an article.
 
@@ -260,7 +284,7 @@ Updates the reading status of an article.
 
 ---
 
-## Audio
+## Audio _(planned — Phases 7–8)_
 
 ### `POST /api/articles/{article_id}/audio`
 
@@ -362,4 +386,13 @@ Each value is a two-element array: `[inserted, skipped]`. Articles already in th
 
 ### `GET /`
 
-Returns `voce/static/index.html` — the single-page browser UI. All subsequent UI data fetches go through the JSON endpoints above.
+Returns `voce/static/index.html` — the single-page browser UI. The HTML shell, JavaScript, and CSS are also accessible at their static paths:
+
+| Path | Description |
+|------|-------------|
+| `GET /` | Application shell (`index.html`) |
+| `GET /static/app.js` | All application JavaScript |
+| `GET /static/styles.css` | Custom CSS (prose, cards, badges, toast) |
+| `GET /static/favicon.svg` | Browser tab icon |
+
+All subsequent UI data fetches go through the JSON endpoints documented above. The browsing UI (Phase 6) is fully implemented; audio playback (Phase 8) and reading status mutation from the UI (Phase 9) are not yet wired.
