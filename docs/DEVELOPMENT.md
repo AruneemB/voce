@@ -148,7 +148,7 @@ Reload the browser to see changes. The server does not need to restart for stati
 
 ## Project layout
 
-```
+```text
 voce/
 ├── pyproject.toml          Project metadata, dependencies, tool config
 ├── .env.example            Environment variable template
