@@ -9,6 +9,8 @@ from pathlib import Path
 from loguru import logger
 from mutagen.mp3 import MP3
 
+from elevenlabs import ElevenLabs
+
 from voce.article import build_preamble
 from voce.config import settings
 from voce.exceptions import ArticleNotFoundError, ArticleTextMissingError, TTSSynthesisError
@@ -84,7 +86,6 @@ def synthesize_article(article_id: str, conn: sqlite3.Connection) -> Path:
 
     chunks = chunk_text(full_text)
 
-    from elevenlabs import ElevenLabs
     client = ElevenLabs(api_key=settings.elevenlabs_api_key)
 
     try:
