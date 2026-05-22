@@ -102,7 +102,7 @@ Each `from_row()` classmethod filters `sqlite3.Row` keys against the dataclass f
 
 **Owns:** All Voce-specific exception types.
 
-```
+```text
 VoceError (base)
 ├── FeedFetchError(slug, url, cause)
 ├── ArticleFetchError(url, cause)
