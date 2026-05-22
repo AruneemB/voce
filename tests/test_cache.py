@@ -93,6 +93,24 @@ def test_sweep_handles_missing_file_gracefully(mem_conn):
     assert count == 1
 
 
+def test_sweep_expires_same_day_older_timestamp(mem_conn, tmp_path):
+    mp3 = tmp_path / "art1.mp3"
+    mp3.write_bytes(b"fake-mp3")
+    today = mem_conn.execute("SELECT date('now')").fetchone()[0]
+    # Midnight today is earlier than now, so ttl_days=0 should treat it as expired.
+    _insert_cache_row(mem_conn, "art1", str(mp3), f"{today}T00:00:00Z")
+
+    count = sweep_expired_cache(mem_conn, ttl_days=0)
+
+    assert count == 1
+    assert not mp3.exists()
+
+
+def test_sweep_raises_for_negative_ttl_days(mem_conn):
+    with pytest.raises(ValueError, match="ttl_days must be non-negative"):
+        sweep_expired_cache(mem_conn, ttl_days=-1)
+
+
 # ── get_cache_stats tests ─────────────────────────────────────────────────────
 
 def test_get_cache_stats_empty(mem_conn):
