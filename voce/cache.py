@@ -11,6 +11,20 @@ from voce.config import settings
 
 
 def sweep_expired_cache(conn: sqlite3.Connection, ttl_days: int | None = None) -> int:
+    """Delete expired audio cache entries and their MP3 files from disk.
+
+    A cache entry is expired when its ``last_played_at`` timestamp is older than
+    *ttl_days* ago.  *ttl_days* defaults to ``settings.audio_cache_ttl_days``
+    when not provided.  The value is coerced to ``int`` and must be
+    non-negative; a negative value raises ``ValueError``.
+
+    RFC3339 ``last_played_at`` values are normalised via SQLite's
+    ``datetime()`` before comparison so that the ``T``/``Z`` separators in
+    stored timestamps do not cause lexicographic comparison errors.
+
+    MP3 files that have already been removed from disk are skipped silently.
+    Returns the number of entries deleted.
+    """
     if ttl_days is None:
         ttl_days = settings.audio_cache_ttl_days
     ttl_days = int(ttl_days)
@@ -37,6 +51,14 @@ def sweep_expired_cache(conn: sqlite3.Connection, ttl_days: int | None = None) -
 
 
 def get_cache_stats(conn: sqlite3.Connection) -> dict:
+    """Return a summary of the current audio cache state.
+
+    Returns a dict with keys:
+
+    * ``total_files`` — number of rows in ``audio_cache``
+    * ``oldest_played_at`` — earliest ``last_played_at`` timestamp, or ``None``
+    * ``newest_played_at`` — most recent ``last_played_at`` timestamp, or ``None``
+    """
     row = conn.execute(
         "SELECT COUNT(*) as total, "
         "MIN(last_played_at) as oldest, "
