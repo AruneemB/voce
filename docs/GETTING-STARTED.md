@@ -63,7 +63,7 @@ cp .env.example .env
 
 Open `.env` and set your key:
 
-```
+```env
 ELEVENLABS_API_KEY=your_key_here
 ```
 
