@@ -168,20 +168,26 @@ def enrich_all_unenriched(conn, client) -> tuple[int, int]: ...
 **Owns:** Splitting text into API-safe chunks, calling ElevenLabs, and assembling the final MP3.
 
 ```python
-ELEVENLABS_CHAR_LIMIT: int  # per-request character limit
+ELEVENLABS_CHAR_LIMIT: int = 2500  # per-request character limit
 
 def chunk_text(text: str, limit: int = ELEVENLABS_CHAR_LIMIT) -> list[str]: ...
-def synthesize_chunk(text: str, voice_id: str, model_id: str) -> bytes: ...
-def get_audio_duration(path: Path) -> int: ...
+def synthesize_chunk(text: str, client: ElevenLabs) -> bytes: ...
+def get_audio_duration(mp3_bytes: bytes) -> float: ...
 def synthesize_article(article_id: str, conn: sqlite3.Connection) -> Path: ...
-def get_or_synthesize(article_id: str, conn: sqlite3.Connection) -> Path: ...
 ```
 
-`chunk_text()` splits at paragraph boundaries first, then sentence boundaries, then space boundaries, and finally performs a hard character-count split as a last resort. It never splits inside a word.
+`chunk_text()` splits at sentence boundaries (`". "`, `"! "`, `"? "`) first, then at the last space within the limit, and falls back to a hard character-count split only when no whitespace exists within the limit. This last resort may split an oversized single token. Empty strings are filtered from the result.
 
-`synthesize_article()` enforces the 50,000-character cost guard before beginning synthesis. It raises `TTSSynthesisError` (translated to HTTP 413) if the article is too long.
+`synthesize_chunk()` calls `client.text_to_speech.convert()` with the configured voice and model IDs. It collects the returned bytes iterator with `b"".join(...)`. On any exception from ElevenLabs it raises `TTSSynthesisError(article_id="unknown", cause=exc)`.
 
-`get_or_synthesize()` checks `audio_cache` first. If a cached file exists with a matching `voice_id`, it returns the path without calling ElevenLabs. Otherwise it delegates to `synthesize_article()`.
+`get_audio_duration()` reads the length from an in-memory `mutagen.mp3.MP3` object and returns it as a float (seconds).
+
+`synthesize_article()` is the full pipeline:
+1. Queries the article by ID; raises `ArticleNotFoundError` if missing, `ArticleTextMissingError` if `body_text` is empty.
+2. Checks `audio_cache` — if a cached entry exists **and the MP3 file is present on disk**, updates `last_played_at` and returns the cached path immediately (no ElevenLabs call). If the row exists but the file is missing, the stale row is deleted and synthesis proceeds normally.
+3. Builds the full narration text: `build_preamble(title, author, published_at) + "\n\n" + body_text`.
+4. Enforces the 50,000-character cost guard; raises `ArticleTextMissingError` if exceeded.
+5. Chunks, synthesises, concatenates, writes the MP3 to `settings.audio_cache_dir/{article_id}.mp3`, inserts the `audio_cache` row, and returns the path.
 
 ---
 
@@ -190,13 +196,21 @@ def get_or_synthesize(article_id: str, conn: sqlite3.Connection) -> Path: ...
 **Owns:** Sweeping expired audio files and reporting cache statistics.
 
 ```python
-def sweep_expired_cache(conn: sqlite3.Connection) -> int: ...
+def sweep_expired_cache(conn: sqlite3.Connection, ttl_days: int | None = None) -> int: ...
 def get_cache_stats(conn: sqlite3.Connection) -> dict: ...
 ```
 
-`sweep_expired_cache()` deletes `audio_cache` rows where `last_played_at` is older than `settings.audio_cache_ttl_days`. It also deletes the corresponding MP3 files from disk. Returns the count of entries swept.
+`sweep_expired_cache()` deletes `audio_cache` rows where `last_played_at` is older than `ttl_days` ago. `ttl_days` defaults to `settings.audio_cache_ttl_days` when not provided; it is coerced to `int` and must be non-negative (raises `ValueError` otherwise). RFC3339 timestamps stored in `last_played_at` are normalised via SQLite's `datetime()` before comparison to avoid lexicographic ordering errors. The corresponding MP3 file is deleted from disk (silently skipped if already missing) before the row is removed. Returns the count of entries swept.
 
-`get_cache_stats()` returns a dict with total cached articles, total disk usage in bytes, and the oldest and newest cache entries.
+`get_cache_stats()` returns a dict with three keys:
+
+```python
+{
+    "total_files": int,           # number of rows in audio_cache
+    "oldest_played_at": str | None,  # earliest last_played_at timestamp
+    "newest_played_at": str | None,  # most recent last_played_at timestamp
+}
+```
 
 ---
 
