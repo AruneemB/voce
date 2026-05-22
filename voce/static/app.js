@@ -208,6 +208,13 @@ document.addEventListener('DOMContentLoaded', () => {
     loadArticles(true);
   });
 
+  // Topic filter
+  document.getElementById('topic-filter').addEventListener('change', e => {
+    currentTopic = e.target.value || null;
+    currentOffset = 0;
+    loadArticles(true);
+  });
+
   // Search
   setupSearch();
 
