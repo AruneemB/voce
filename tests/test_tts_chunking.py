@@ -49,6 +49,11 @@ def test_chunk_text_hard_splits_when_no_space():
         assert len(chunk) <= ELEVENLABS_CHAR_LIMIT
 
 
+def test_chunk_text_raises_for_non_positive_limit():
+    with pytest.raises(ValueError, match="limit must be a positive integer"):
+        chunk_text("some text", limit=0)
+
+
 # ── synthesize_article tests ──────────────────────────────────────────────────
 
 @pytest.fixture
@@ -100,3 +105,60 @@ def test_synthesize_article_writes_file_and_inserts_cache(mock_elevenlabs_cls, m
         "SELECT * FROM audio_cache WHERE article_id='art1'"
     ).fetchone()
     assert row is not None
+
+
+@patch("voce.tts.ElevenLabs")
+def test_synthesize_article_returns_cached_path_without_calling_elevenlabs(
+    mock_elevenlabs_cls, mem_conn_with_article, tmp_path
+):
+    mp3 = tmp_path / "art1.mp3"
+    mp3.write_bytes(b"existing-mp3")
+    mem_conn_with_article.execute(
+        "INSERT INTO audio_cache (article_id, file_path, voice_id, last_played_at) VALUES (?,?,?,?)",
+        ("art1", str(mp3), "voice-test", "2024-01-01T00:00:00Z"),
+    )
+    mem_conn_with_article.commit()
+
+    out_path = synthesize_article("art1", mem_conn_with_article)
+
+    mock_elevenlabs_cls.assert_not_called()
+    assert out_path == mp3
+    row = mem_conn_with_article.execute(
+        "SELECT last_played_at FROM audio_cache WHERE article_id='art1'"
+    ).fetchone()
+    assert row["last_played_at"] != "2024-01-01T00:00:00Z"
+
+
+@patch("voce.tts.ElevenLabs")
+def test_synthesize_article_resynthesize_when_cached_file_missing(
+    mock_elevenlabs_cls, mem_conn_with_article, tmp_path
+):
+    stale_path = tmp_path / "stale-art1.mp3"
+    # Do NOT write the file — simulate a missing MP3
+    mem_conn_with_article.execute(
+        "INSERT INTO audio_cache (article_id, file_path, voice_id, last_played_at) VALUES (?,?,?,?)",
+        ("art1", str(stale_path), "voice-test", "2020-01-01T00:00:00Z"),
+    )
+    mem_conn_with_article.commit()
+
+    mock_client = MagicMock()
+    mock_client.text_to_speech.convert.return_value = iter([b"\xff\xfb" + b"\x00" * 100])
+    mock_elevenlabs_cls.return_value = mock_client
+
+    from voce import config as cfg
+    original_dir = cfg.settings.audio_cache_dir
+    cfg.settings.audio_cache_dir = tmp_path
+
+    try:
+        with patch("voce.tts.get_audio_duration", return_value=5.0):
+            out_path = synthesize_article("art1", mem_conn_with_article)
+    finally:
+        cfg.settings.audio_cache_dir = original_dir
+
+    mock_elevenlabs_cls.assert_called_once()
+    assert out_path.exists()
+    row = mem_conn_with_article.execute(
+        "SELECT file_path FROM audio_cache WHERE article_id='art1'"
+    ).fetchone()
+    assert row is not None
+    assert row["file_path"] == str(out_path)
