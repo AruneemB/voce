@@ -238,7 +238,7 @@ def build_scheduler(conn_factory: Callable[[], sqlite3.Connection]) -> Backgroun
 - **`feed_refresh`** — interval trigger, fires every `settings.feed_refresh_minutes` minutes; calls `_refresh_job(conn_factory)`, which opens a fresh connection, calls `refresh_all_feeds()`, logs the per-section counts, and closes the connection in a `finally` block.
 - **`cache_sweep`** — cron trigger, fires daily at 03:00 UTC; calls `_sweep_job(conn_factory)`, which opens a fresh connection, calls `sweep_expired_cache()`, logs the count of deleted files, and closes the connection.
 
-Both private job functions catch and log any exception so that a failure in one job does not affect the other. Each job opens its own connection (via `conn_factory`) rather than sharing a connection across threads.
+Both private job functions guard against connection errors by initialising `conn = None` before the `try` block. The `conn_factory()` call is inside `try` so that a factory failure is caught and logged rather than crashing the scheduler thread. The `finally` block uses `if conn is not None: conn.close()` to ensure the connection is only closed when it was actually opened. Each job opens its own connection (via `conn_factory`) rather than sharing a connection across threads.
 
 `build_scheduler()` is called in the FastAPI `lifespan` context, which starts the scheduler on app startup and calls `scheduler.shutdown(wait=False)` on teardown.
 
@@ -271,7 +271,7 @@ app: FastAPI  # module-level instance
 The `lifespan` context manager:
 1. Opens a connection, runs `bootstrap_schema()`, and closes it.
 2. Calls `build_scheduler(get_connection)` and starts the returned scheduler.
-3. Launches a daemon thread that calls `refresh_all_feeds(get_connection())` immediately on startup.
+3. Launches a daemon thread that runs a `_refresh_once()` helper, which opens a connection, calls `refresh_all_feeds()`, and closes the connection in a `finally` block — ensuring the startup connection is always released.
 4. On teardown (after `yield`), calls `scheduler.shutdown(wait=False)`.
 
 All routes are thin: validate inputs, run a parameterised query via the `ConnDep` dependency, return a Pydantic model. No business logic lives in routes.
@@ -382,7 +382,7 @@ const VALID_STATUSES = new Set(['unread', 'queued', 'listened']);
 | `pollAudioStatus` | `(articleId, attempt) → void` | Retries every 2 seconds. Aborts immediately (without rendering) if `articleId !== currentArticleId`, preventing stale-poll results from overwriting the detail pane when the user has navigated to a different article. After 60 attempts (120 seconds), shows an error toast and restores the generate button. |
 | `showToast` | `(message, type) → void` | Creates a coloured `<div>` (red for `"error"`, green for `"success"`, blue for `"info"`) in `#toast-container`. Auto-removes after 4000 ms via `setTimeout`. |
 | `triggerRefresh` | `async () → void` | Posts to `/api/refresh`, shows a success or error toast, then reloads sections and articles. |
-| `setState` | `async (articleId, status) → void` | POSTs `{status}` to `/api/articles/{id}/state`. On success, updates `#current-state` text and calls `loadSections()` to refresh unread badge counts. On failure, shows an error toast. Listeners are attached via `addEventListener` on `[data-state-action]` buttons — no `onclick` attribute is used. |
+| `setState` | `async (articleId, status) → void` | POSTs `{status}` to `/api/articles/{id}/state`. After the response resolves, checks `articleId === currentArticleId` before updating the DOM — if the user navigated to a different article while the request was in flight, the response is silently discarded. On success, updates `#current-state` text and calls `loadSections()` to refresh unread badge counts. On failure, shows an error toast. Listeners are attached via `addEventListener` on `[data-state-action]` buttons — no `onclick` attribute is used. |
 
 All article fields injected via `innerHTML` (`title`, `author`, `summary`, `body_text`, `display_name`) are passed through `escapeHtml()`. Status values used in CSS class names are validated against `VALID_STATUSES` before interpolation; any unrecognised status falls back to `"unread"`. The generate button never carries an `onclick` attribute; event listeners are always attached via `addEventListener` after the HTML is written, preventing any risk of script injection through article ID values.
 
