@@ -192,6 +192,30 @@ def test_synthesize_article_returns_cached_path_without_calling_elevenlabs(
     assert row["last_played_at"] != "2024-01-01T00:00:00Z"
 
 
+def test_synthesize_article_refuses_body_text_exceeding_50k_chars(mem_conn_with_article):
+    oversized = "x" * 50_001
+    mem_conn_with_article.execute("UPDATE articles SET body_text=? WHERE id='art1'", (oversized,))
+    mem_conn_with_article.commit()
+    with pytest.raises(ArticleTextMissingError):
+        synthesize_article("art1", mem_conn_with_article)
+
+
+@patch("voce.tts.ElevenLabs")
+def test_synthesize_article_propagates_tts_synthesis_error(mock_elevenlabs_cls, mem_conn_with_article, tmp_path):
+    mock_client = MagicMock()
+    mock_client.text_to_speech.convert.side_effect = RuntimeError("ElevenLabs down")
+    mock_elevenlabs_cls.return_value = mock_client
+
+    from voce import config as cfg
+    original_dir = cfg.settings.audio_cache_dir
+    cfg.settings.audio_cache_dir = tmp_path
+    try:
+        with pytest.raises(TTSSynthesisError):
+            synthesize_article("art1", mem_conn_with_article)
+    finally:
+        cfg.settings.audio_cache_dir = original_dir
+
+
 @patch("voce.tts.ElevenLabs")
 def test_synthesize_article_resynthesize_when_cached_file_missing(
     mock_elevenlabs_cls, mem_conn_with_article, tmp_path
