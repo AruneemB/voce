@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Voce</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <script>tailwind.config = { darkMode: 'class' }</script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/htmx.org@1.9.10" integrity="sha384-D1Kt99CQMDuVetoL1lrYwg5t+9QdHe7NLX/SoJYkXDFfX37iInKRy5ViYgSibmK" crossorigin="anonymous"></script>
   <link rel="stylesheet" href="/static/styles.css">
@@ -29,6 +30,7 @@
         onclick="triggerRefresh()"
         class="px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
       >Refresh</button>
+      <button id="theme-toggle" onclick="toggleTheme()" aria-label="Toggle dark mode">🌙</button>
     </div>
   </header>
 

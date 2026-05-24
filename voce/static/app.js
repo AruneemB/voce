@@ -31,6 +31,17 @@ function escapeHtml(value = '') {
     .replaceAll("'", '&#39;');
 }
 
+async function safeFetch(url, options = {}) {
+  try {
+    const resp = await fetch(url, options);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    return await resp.json();
+  } catch (err) {
+    showToast(`Request failed: ${err.message}`, 'error');
+    throw err;
+  }
+}
+
 // ── Articles ──────────────────────────────────────────────────────────────────
 async function loadArticles(reset = true) {
   if (isLoadingArticles) return;
@@ -49,9 +60,7 @@ async function loadArticles(reset = true) {
   if (currentTopic) params.set('topic', currentTopic);
 
   try {
-    const res = await fetch(`/api/articles?${params}`);
-    if (!res.ok) throw new Error('articles fetch failed');
-    const data = await res.json();
+    const data = await safeFetch(`/api/articles?${params}`);
     const items = Array.isArray(data.items) ? data.items : [];
     items.forEach(article => {
       const card = document.createElement('div');
@@ -75,8 +84,8 @@ async function loadArticles(reset = true) {
     });
     currentOffset += items.length;
     hasMoreArticles = items.length === PAGE_SIZE;
-  } catch (e) {
-    showToast('Failed to load articles', 'error');
+  } catch (_) {
+    // safeFetch already showed a toast
   } finally {
     isLoadingArticles = false;
   }
@@ -90,9 +99,7 @@ async function loadArticleDetail(articleId) {
   if (activeCard) activeCard.classList.add('active');
 
   try {
-    const res = await fetch(`/api/articles/${articleId}`);
-    if (!res.ok) throw new Error('detail fetch failed');
-    const article = await res.json();
+    const article = await safeFetch(`/api/articles/${articleId}`);
 
     const paragraphs = (article.body_text || '')
       .split('\n\n')
@@ -121,16 +128,13 @@ async function loadArticleDetail(articleId) {
     history.pushState({ articleId }, '', `#article/${articleId}`);
 
     try {
-      const statusRes = await fetch(`/api/articles/${articleId}/audio/status`);
-      const statusData = statusRes.ok
-        ? await statusRes.json()
-        : { cached: false, pending: false };
+      const statusData = await safeFetch(`/api/articles/${articleId}/audio/status`);
       renderAudioSection(articleId, statusData, article);
     } catch (_) {
       renderAudioSection(articleId, { cached: false, pending: false }, article);
     }
-  } catch (e) {
-    showToast('Failed to load article', 'error');
+  } catch (_) {
+    // safeFetch already showed a toast
   }
 }
 
@@ -150,15 +154,14 @@ function showToast(message, type = 'info') {
 
 // ── Refresh ───────────────────────────────────────────────────────────────────
 async function triggerRefresh() {
+  showToast('Refreshing feeds…', 'info');
   try {
-    const res = await fetch('/api/refresh', { method: 'POST' });
-    if (!res.ok) throw new Error('refresh failed');
-    showToast('Feed refreshed', 'success');
+    const data = await safeFetch('/api/refresh', { method: 'POST' });
+    const total = Object.values(data).reduce((a, v) => a + v[0], 0);
+    showToast(`Refresh complete. ${total} new articles.`, 'success');
     loadSections();
     loadArticles(true);
-  } catch (e) {
-    showToast('Failed to refresh feed', 'error');
-  }
+  } catch (_) {}
 }
 
 // ── Debounced Search ──────────────────────────────────────────────────────────
@@ -177,14 +180,8 @@ function setupSearch() {
       list.innerHTML = '';
       currentOffset = 0;
       try {
-        let res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
-        if (res.status === 404) {
-          res = await fetch(`/api/articles?q=${encodeURIComponent(q)}&limit=${PAGE_SIZE}&offset=0`);
-        }
-        if (!res.ok) throw new Error('search failed');
-        const data = await res.json();
-        const items = Array.isArray(data) ? data : (data.items || []);
-        items.forEach(article => {
+        const items = await safeFetch(`/api/search?q=${encodeURIComponent(q)}`);
+        (Array.isArray(items) ? items : []).forEach(article => {
           const card = document.createElement('div');
           card.className = 'article-card';
           card.dataset.articleId = article.id;
@@ -199,17 +196,36 @@ function setupSearch() {
             <span class="status-badge status-${status} mt-1">${escapeHtml(status)}</span>
           `;
           card.addEventListener('click', () => loadArticleDetail(article.id));
+          card.addEventListener('keydown', e => {
+            if (e.key === 'Enter' || e.key === ' ') loadArticleDetail(article.id);
+          });
           list.appendChild(card);
         });
-      } catch (e) {
-        showToast('Search failed', 'error');
+      } catch (_) {
+        // safeFetch already showed a toast
       }
     }, 300);
   });
 }
 
+// ── Dark mode ─────────────────────────────────────────────────────────────────
+function toggleTheme() {
+  const html = document.documentElement;
+  if (html.classList.contains('dark')) {
+    html.classList.remove('dark');
+    localStorage.setItem('theme', 'light');
+  } else {
+    html.classList.add('dark');
+    localStorage.setItem('theme', 'dark');
+  }
+}
+
 // ── Initialisation ────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  if (localStorage.getItem('theme') === 'dark') {
+    document.documentElement.classList.add('dark');
+  }
+
   loadSections();
   loadArticles(true);
 
@@ -286,19 +302,17 @@ function formatDuration(seconds) {
 
 async function setState(articleId, status) {
   try {
-    const res = await fetch(`/api/articles/${articleId}/state`, {
+    const data = await safeFetch(`/api/articles/${articleId}/state`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status }),
     });
-    if (!res.ok) throw new Error('state update failed');
-    const data = await res.json();
     if (articleId !== currentArticleId) return;
     const el = document.getElementById('current-state');
     if (el) el.textContent = `Status: ${data.status}`;
     loadSections();
   } catch (_) {
-    showToast('Failed to update state', 'error');
+    // safeFetch already showed a toast
   }
 }
 
@@ -308,17 +322,16 @@ async function requestAudio(articleId) {
     container.innerHTML = '<p class="text-sm text-gray-500 animate-pulse">Generating audio…</p>';
   }
   try {
-    const res = await fetch(`/api/articles/${articleId}/audio`, { method: 'POST' });
-    if (!res.ok) throw new Error('trigger failed');
-    const data = await res.json();
+    const data = await safeFetch(`/api/articles/${articleId}/audio`, { method: 'POST' });
     if (data.status === 'ready') {
-      const statusRes = await fetch(`/api/articles/${articleId}/audio/status`);
-      if (statusRes.ok) renderAudioSection(articleId, await statusRes.json(), null);
+      try {
+        const statusData = await safeFetch(`/api/articles/${articleId}/audio/status`);
+        renderAudioSection(articleId, statusData, null);
+      } catch (_) {}
     } else {
       pollAudioStatus(articleId, 0);
     }
   } catch (_) {
-    showToast('Failed to start audio generation', 'error');
     if (container) {
       container.innerHTML = buildGenerateButton(false);
       container.querySelector('.btn-generate').addEventListener('click', () => requestAudio(articleId));
@@ -340,9 +353,7 @@ function pollAudioStatus(articleId, attempt) {
   setTimeout(async () => {
     if (articleId !== currentArticleId) return;
     try {
-      const res = await fetch(`/api/articles/${articleId}/audio/status`);
-      if (!res.ok) throw new Error('status fetch failed');
-      const data = await res.json();
+      const data = await safeFetch(`/api/articles/${articleId}/audio/status`);
       if (data.cached) {
         renderAudioSection(articleId, data, null);
       } else {
@@ -357,9 +368,7 @@ function pollAudioStatus(articleId, attempt) {
 // ── Sections ──────────────────────────────────────────────────────────────────
 async function loadSections() {
   try {
-    const res = await fetch('/api/sections');
-    if (!res.ok) throw new Error('sections fetch failed');
-    const sections = await res.json();
+    const sections = await safeFetch('/api/sections');
     const list = document.getElementById('section-list');
     list.innerHTML = '';
     sections.forEach(item => {
@@ -378,7 +387,7 @@ async function loadSections() {
       li.appendChild(btn);
       list.appendChild(li);
     });
-  } catch (e) {
-    showToast('Failed to load sections', 'error');
+  } catch (_) {
+    // safeFetch already showed a toast
   }
 }

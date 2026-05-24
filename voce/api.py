@@ -451,6 +451,52 @@ def get_queue(conn: ConnDep) -> list[ArticleSummaryOut]:
     ]
 
 
+@app.get("/api/search", response_model=list[ArticleSummaryOut])
+def search_articles(
+    conn: ConnDep,
+    q: str = Query(...),
+    limit: int = Query(50, ge=1, le=200),
+) -> list[ArticleSummaryOut]:
+    try:
+        rows = conn.execute(
+            "SELECT a.id, a.section, a.title, a.author, a.published_at, a.url, "
+            "a.summary, a.quanta_audio_url, COALESCE(r.status, 'unread') AS status "
+            "FROM fts_articles "
+            "JOIN articles a ON fts_articles.rowid = a.rowid "
+            "LEFT JOIN reading_state r ON r.article_id = a.id "
+            "WHERE fts_articles MATCH ? "
+            "ORDER BY rank "
+            "LIMIT ?",
+            (q, limit),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        like_q = f"%{q}%"
+        rows = conn.execute(
+            "SELECT a.id, a.section, a.title, a.author, a.published_at, a.url, "
+            "a.summary, a.quanta_audio_url, COALESCE(r.status, 'unread') AS status "
+            "FROM articles a "
+            "LEFT JOIN reading_state r ON r.article_id = a.id "
+            "WHERE a.title LIKE ? OR a.body_text LIKE ? "
+            "ORDER BY a.published_at DESC "
+            "LIMIT ?",
+            (like_q, like_q, limit),
+        ).fetchall()
+    return [
+        ArticleSummaryOut(
+            id=r["id"],
+            section=r["section"],
+            title=r["title"],
+            author=r["author"],
+            published_at=r["published_at"],
+            url=r["url"],
+            summary=r["summary"],
+            status=r["status"],
+            quanta_audio_url=r["quanta_audio_url"],
+        )
+        for r in rows
+    ]
+
+
 @app.post("/api/refresh")
 async def refresh(conn: ConnDep) -> dict:
     loop = asyncio.get_running_loop()

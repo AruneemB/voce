@@ -4,8 +4,6 @@ Voce exposes a JSON API served by FastAPI on `http://127.0.0.1:8765` by default.
 
 ## Implementation status
 
-Not all endpoints described in this reference are implemented yet. The table below reflects the current state of the codebase.
-
 | Endpoint | Status | Phase |
 |----------|--------|-------|
 | `GET /` | Implemented | 5 |
@@ -14,15 +12,13 @@ Not all endpoints described in this reference are implemented yet. The table bel
 | `GET /api/articles/{id}` | Implemented | 5 |
 | `GET /api/topics` | Implemented | 5 |
 | `POST /api/refresh` | Implemented | 5 |
-| `GET /api/articles/{id}/topics` | Planned | 9 |
-| `GET /api/search` | Planned | 10 |
+| `GET /api/articles/{id}/topics` | Planned | — |
+| `GET /api/search` | Implemented | 10 |
 | `GET /api/queue` | Implemented | 9 |
 | `POST /api/articles/{id}/state` | Implemented | 9 |
 | `POST /api/articles/{id}/audio` | Implemented | 8 |
 | `GET /api/articles/{id}/audio/status` | Implemented | 8 |
 | `GET /api/articles/{id}/audio/stream` | Implemented | 8 |
-
-> **Note on search:** The frontend (`app.js`) attempts `GET /api/search?q=` first and falls back to `GET /api/articles?q=` on a `404`. This means full-text search works today via the `q` parameter on `/api/articles`. The dedicated `/api/search` endpoint (with richer response metadata) is a Phase 10 addition.
 
 ---
 
@@ -223,23 +219,49 @@ Returns all topics across the article catalogue, with article counts.
 
 ## Search
 
-### `GET /api/search` _(planned — Phase 10)_
+### `GET /api/search`
 
-Full-text search across article titles and body text.
-
-> **Current behaviour:** Full-text search is available today via the `q` parameter on `GET /api/articles` (e.g. `/api/articles?q=black+holes`). The frontend falls back to this endpoint when `/api/search` returns 404. The dedicated `/api/search` endpoint will expose richer response metadata and may support additional filtering options.
+Full-text search across article titles and body text. Uses SQLite's FTS5 virtual table for fast, relevance-ranked results, with automatic fallback to `LIKE`-based substring search when FTS5 is unavailable.
 
 **Query parameters**
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `q` | string | Yes | Search query |
-| `limit` | integer | No | Results per page (1–100, default 30) |
-| `offset` | integer | No | Offset for pagination (default 0) |
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `q` | string | Yes | — | Search query. FTS5 operators (`AND`, `OR`, `NOT`, `*`) are supported when the FTS5 index is active |
+| `limit` | integer | No | `50` | Maximum results to return (1–200) |
 
-Voce uses SQLite's FTS5 engine for efficient full-text search. If the FTS query syntax is invalid, the API falls back to a `LIKE`-based substring search.
+**Search strategy**
 
-**Response** — `200 OK` — same shape as `GET /api/articles`
+1. **FTS5 (primary):** Executes a `MATCH` query against the `fts_articles` virtual table, joining back to `articles` and `reading_state` via `LEFT JOIN`. Results are ordered by FTS5 relevance rank. Articles without a `reading_state` row are included with status defaulting to `"unread"`.
+2. **LIKE fallback:** If the FTS5 virtual table is unavailable (raises `sqlite3.OperationalError`), falls back to a `WHERE a.title LIKE ? OR a.body_text LIKE ?` query using `%q%` as the pattern. The pattern is built as a Python string and passed as a parameterised binding — `q` is never interpolated directly into the SQL string. Results are ordered by `published_at DESC`. Articles without a `reading_state` row are included with status defaulting to `"unread"`.
+
+Both paths use `LEFT JOIN reading_state` so that articles ingested before their first `reading_state` row is created are never silently excluded from search results.
+
+**Response** — `200 OK`, array of article summary objects
+
+```json
+[
+  {
+    "id": "a3f2b1c8d4e5f6a7",
+    "section": "physics",
+    "title": "How Quantum Mechanics Defies Intuition",
+    "author": "Natalie Wolchover",
+    "published_at": "2024-03-15T00:00:00Z",
+    "url": "https://www.quantamagazine.org/...",
+    "summary": "A brief overview...",
+    "status": "unread",
+    "quanta_audio_url": null
+  }
+]
+```
+
+Returns an empty array when no articles match. See article summary fields under `GET /api/articles` for field descriptions.
+
+**Error responses**
+
+| Status | Condition |
+|--------|-----------|
+| `422 Unprocessable Entity` | `q` parameter is missing |
 
 ---
 
@@ -442,4 +464,11 @@ Returns `voce/static/index.html` — the single-page browser UI. The HTML shell,
 | `GET /static/styles.css` | Custom CSS (prose, cards, badges, toast) |
 | `GET /static/favicon.svg` | Browser tab icon |
 
-All subsequent UI data fetches go through the JSON endpoints documented above. The browsing UI (Phase 6), audio playback (Phase 8), and reading status mutation (Phase 9) are fully implemented. State toggle buttons (Queue / Mark Listened / Mark Unread) appear in the article detail view and post to `POST /api/articles/{id}/state`.
+All subsequent UI data fetches go through the JSON endpoints documented above. The browsing UI (Phase 6), audio playback (Phase 8), reading status mutation (Phase 9), and the Phase 10 polish features are fully implemented.
+
+**Phase 10 frontend additions:**
+
+- **`safeFetch` wrapper** — every `fetch()` call is wrapped in `safeFetch(url, options)`, which automatically shows an error toast and re-throws on non-OK responses. Callers no longer inspect `resp.ok` directly.
+- **Search wiring** — the search input debounces 300 ms and calls `GET /api/search?q=`. Results are rendered as article cards in the list panel.
+- **Dark mode toggle** — the `🌙` button in the header toggles a `dark` class on `<html>`. The preference is stored in `localStorage` and restored on page load. Tailwind is configured with `darkMode: 'class'`.
+- **Refresh button feedback** — clicking Refresh shows a "Refreshing feeds…" info toast immediately, then "Refresh complete. N new articles." on success.
