@@ -2,6 +2,7 @@
 import argparse
 import sys
 import webbrowser
+from pathlib import Path
 
 import uvicorn
 from loguru import logger
@@ -38,18 +39,23 @@ def main() -> None:
 
     if args.refresh_now:
         conn = get_connection()
-        result = refresh_all_feeds(conn)
-        conn.close()
-        print(result)
-        raise SystemExit(0)
+        try:
+            result = refresh_all_feeds(conn)
+            print(result)
+            raise SystemExit(0)
+        finally:
+            conn.close()
 
     if args.sweep_cache:
         conn = get_connection()
-        count = sweep_expired_cache(conn)
-        conn.close()
-        print(f"Swept {count} expired cache entries.")
-        raise SystemExit(0)
+        try:
+            count = sweep_expired_cache(conn)
+            print(f"Swept {count} expired cache entries.")
+            raise SystemExit(0)
+        finally:
+            conn.close()
 
+    Path("data").mkdir(parents=True, exist_ok=True)
     logger.remove()
     logger.add(
         sys.stderr,
