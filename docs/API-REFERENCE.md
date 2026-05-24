@@ -16,8 +16,8 @@ Not all endpoints described in this reference are implemented yet. The table bel
 | `POST /api/refresh` | Implemented | 5 |
 | `GET /api/articles/{id}/topics` | Planned | 9 |
 | `GET /api/search` | Planned | 10 |
-| `GET /api/queue` | Planned | 9 |
-| `POST /api/articles/{id}/state` | Planned | 9 |
+| `GET /api/queue` | Implemented | 9 |
+| `POST /api/articles/{id}/state` | Implemented | 9 |
 | `POST /api/articles/{id}/audio` | Implemented | 8 |
 | `GET /api/articles/{id}/audio/status` | Implemented | 8 |
 | `GET /api/articles/{id}/audio/stream` | Implemented | 8 |
@@ -245,19 +245,45 @@ Voce uses SQLite's FTS5 engine for efficient full-text search. If the FTS query 
 
 ## Queue
 
-### `GET /api/queue` _(planned — Phase 9)_
+### `GET /api/queue`
 
-Returns all articles currently marked as `queued`, ordered by when they were queued (most recent first).
+Returns all articles currently marked as `queued`, ordered by when they were queued (oldest first — `updated_at ASC`). Returns all queued articles in a single response (no pagination).
 
-**Response** — `200 OK` — same shape as `GET /api/articles` (without pagination; returns all queued articles)
+**Response** — `200 OK`, array of article summary objects
+
+Same field shape as the items array in `GET /api/articles` (see article summary fields above). All returned items have `"status": "queued"`.
+
+```json
+[
+  {
+    "id": "a3f2b1c8d4e5f6a7",
+    "section": "physics",
+    "title": "How Quantum Mechanics Defies Intuition",
+    "author": "Natalie Wolchover",
+    "published_at": "2024-03-15T00:00:00Z",
+    "url": "https://www.quantamagazine.org/...",
+    "summary": "A brief overview of the article...",
+    "status": "queued",
+    "quanta_audio_url": null
+  }
+]
+```
+
+Returns an empty array when no articles are queued.
 
 ---
 
 ## Reading state
 
-### `POST /api/articles/{article_id}/state` _(planned — Phase 9)_
+### `POST /api/articles/{article_id}/state`
 
-Updates the reading status of an article.
+Updates the reading status of an article. Uses an UPSERT — creating the `reading_state` row if it does not yet exist, or updating the existing one. All three state transitions are valid in any order.
+
+**Path parameters**
+
+| Parameter | Description |
+|-----------|-------------|
+| `article_id` | The 16-character hex article ID |
 
 **Request body**
 
@@ -269,18 +295,38 @@ Updates the reading status of an article.
 |-------|---------------|
 | `status` | `"unread"`, `"queued"`, `"listened"` |
 
+**State transition rules**
+
+| New status | `last_played_at` | `updated_at` |
+|------------|------------------|--------------|
+| `"queued"` | unchanged | set to `now` |
+| `"listened"` | set to `now` | set to `now` |
+| `"unread"` | set to `NULL` | set to `now` |
+
 **Response** — `200 OK`
 
 ```json
-{ "article_id": "a3f2b1c8d4e5f6a7", "status": "queued" }
+{
+  "article_id": "a3f2b1c8d4e5f6a7",
+  "status": "queued",
+  "last_played_at": null,
+  "updated_at": "2024-03-15T14:30:00"
+}
 ```
+
+| Field | Type | Nullable | Description |
+|-------|------|----------|-------------|
+| `article_id` | string | No | The article ID that was updated |
+| `status` | string | No | New status: `unread`, `queued`, or `listened` |
+| `last_played_at` | string | Yes | UTC timestamp of last audio stream, or `null` |
+| `updated_at` | string | No | UTC timestamp of this status change |
 
 **Error responses**
 
 | Status | Condition |
 |--------|-----------|
 | `404 Not Found` | No article with the given ID exists |
-| `422 Unprocessable Entity` | Invalid status value |
+| `422 Unprocessable Entity` | `status` is not one of `unread`, `queued`, `listened` |
 
 ---
 
@@ -396,4 +442,4 @@ Returns `voce/static/index.html` — the single-page browser UI. The HTML shell,
 | `GET /static/styles.css` | Custom CSS (prose, cards, badges, toast) |
 | `GET /static/favicon.svg` | Browser tab icon |
 
-All subsequent UI data fetches go through the JSON endpoints documented above. The browsing UI (Phase 6) and audio playback (Phase 8) are fully implemented; reading status mutation from the UI (Phase 9) is not yet wired.
+All subsequent UI data fetches go through the JSON endpoints documented above. The browsing UI (Phase 6), audio playback (Phase 8), and reading status mutation (Phase 9) are fully implemented. State toggle buttons (Queue / Mark Listened / Mark Unread) appear in the article detail view and post to `POST /api/articles/{id}/state`.
