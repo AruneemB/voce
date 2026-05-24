@@ -296,13 +296,15 @@ async def trigger_audio(article_id: str, conn: ConnDep) -> dict:
     _synthesis_in_progress.add(article_id)
 
     def _run() -> None:
+        synth_conn = None
         try:
             synth_conn = get_connection()
             synthesize_article(article_id, synth_conn)
-            synth_conn.close()
         except Exception:
             logger.exception("Background synthesis failed for article {}", article_id)
         finally:
+            if synth_conn is not None:
+                synth_conn.close()
             _synthesis_in_progress.discard(article_id)
 
     asyncio.get_event_loop().run_in_executor(None, _run)
