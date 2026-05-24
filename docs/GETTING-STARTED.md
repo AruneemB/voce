@@ -103,6 +103,8 @@ You should see the Voce interface load within a few seconds. The initial feed re
 
 **Refresh** — The Refresh button in the header triggers an immediate feed refresh. A green toast notification confirms the refresh started. New articles appear after a short delay.
 
+**Audio synthesis** — Voce synthesises article narrations on demand via ElevenLabs. When synthesis is triggered (Phase 8), a single MP3 is written to `data/audio_cache/` and reused on all subsequent plays — ElevenLabs is only called once per article. Synthesised audio never leaves your machine.
+
 ---
 
 ## Verifying your setup
@@ -138,3 +140,6 @@ The feed refresh is still in progress. Wait 15–30 seconds and refresh the page
 
 **Browser does not open automatically**
 Navigate manually to `http://127.0.0.1:8765`. Use `--no-browser` to suppress the auto-open on future starts.
+
+**ElevenLabs synthesis fails or article is refused**
+Confirm that `ELEVENLABS_API_KEY` in `.env` is valid and has not expired. Check your ElevenLabs dashboard for quota status. Articles whose full narration text (attribution preamble + body) exceeds 50,000 characters are refused by design to prevent excessive API spend — a `WARNING` line is written to the log when this happens.
