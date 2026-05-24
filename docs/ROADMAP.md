@@ -39,17 +39,26 @@ Navigation state is maintained via `history.pushState`. On load, `location.hash`
 
 **160 tests pass across Phases 1–6** (52 new tests covering static file serving, all nine required element IDs, CDN tag correctness, JavaScript function definitions, state variable declarations, API call patterns, and all CSS selectors and colour values).
 
+### Phase 7 — TTS synthesis
+
+The ElevenLabs synthesis layer (`tts.py`, `cache.py`) implements the complete audio synthesis pipeline:
+
+- **`chunk_text()`** — splits article text into chunks no longer than 2,500 characters, preferring sentence boundaries (`". "`, `"! "`, `"? "`) over word boundaries, with a hard character-count split as a last resort
+- **`synthesize_chunk()`** — calls `client.text_to_speech.convert()` for a single chunk, collecting the returned bytes iterator; wraps any ElevenLabs SDK exception in `TTSSynthesisError`
+- **`get_audio_duration()`** — reads the MP3 duration in seconds from an in-memory `mutagen.mp3.MP3` object
+- **`synthesize_article()`** — full pipeline: article lookup, cache-hit return (updating `last_played_at`), stale-file detection and recovery, 50,000-character cost guard, chunking, synthesis, MP3 assembly, duration measurement, disk write, and `audio_cache` row insertion
+- **`sweep_expired_cache()`** — deletes `audio_cache` rows and their MP3 files where `last_played_at` is older than the configured TTL; accepts an explicit `ttl_days` override or falls back to `settings.audio_cache_ttl_days`
+- **`get_cache_stats()`** — returns total file count, oldest, and newest `last_played_at` timestamps
+
+**208 tests pass across Phases 1–7** (48 new tests covering `chunk_text` boundary algorithm — including sentence, space, hard-split, `! `, `? `, last-boundary selection, and empty-chunk filtering — `synthesize_chunk` bytes-joining and error wrapping, `get_audio_duration` mutagen delegation, `synthesize_article` cache-hit, stale-file recovery, cost guard, and `TTSSynthesisError` propagation, and `sweep_expired_cache` / `get_cache_stats` across multi-entry batches, settings-default TTL, single-entry stats, and post-sweep state).
+
 ---
 
 ## What is coming
 
-### Phase 7 — TTS synthesis
-
-The ElevenLabs synthesis layer (`tts.py`) splits article text into API-safe chunks, synthesises each chunk, and assembles the results into a single MP3 file. The cost guard refuses articles exceeding 50,000 characters. The cache layer (`cache.py`) provides the expiry sweep logic.
-
 ### Phase 8 — Audio player
 
-Wiring the synthesis layer into the browser UI. The article detail view gains an audio player that triggers synthesis on demand, polls for synthesis status, and streams the completed MP3. Articles with Quanta's own narration URL surface that audio first, with local synthesis as a fallback.
+Wiring the synthesis layer into the browser UI. The synthesis back-end (`tts.py`) is fully implemented — Phase 8 exposes it through three new API routes (`POST /api/articles/{id}/audio`, `GET /api/articles/{id}/audio/status`, `GET /api/articles/{id}/audio/stream`) and adds an in-page audio player to the article detail view. Articles with Quanta's own narration URL surface that audio first, with local synthesis as a fallback.
 
 ### Phase 9 — Reading state and scheduler
 
