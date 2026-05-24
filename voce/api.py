@@ -460,10 +460,10 @@ def search_articles(
     try:
         rows = conn.execute(
             "SELECT a.id, a.section, a.title, a.author, a.published_at, a.url, "
-            "a.summary, a.quanta_audio_url, r.status "
+            "a.summary, a.quanta_audio_url, COALESCE(r.status, 'unread') AS status "
             "FROM fts_articles "
             "JOIN articles a ON fts_articles.rowid = a.rowid "
-            "JOIN reading_state r ON r.article_id = a.id "
+            "LEFT JOIN reading_state r ON r.article_id = a.id "
             "WHERE fts_articles MATCH ? "
             "ORDER BY rank "
             "LIMIT ?",
@@ -473,10 +473,11 @@ def search_articles(
         like_q = f"%{q}%"
         rows = conn.execute(
             "SELECT a.id, a.section, a.title, a.author, a.published_at, a.url, "
-            "a.summary, a.quanta_audio_url, r.status "
+            "a.summary, a.quanta_audio_url, COALESCE(r.status, 'unread') AS status "
             "FROM articles a "
-            "JOIN reading_state r ON r.article_id = a.id "
+            "LEFT JOIN reading_state r ON r.article_id = a.id "
             "WHERE a.title LIKE ? OR a.body_text LIKE ? "
+            "ORDER BY a.published_at DESC "
             "LIMIT ?",
             (like_q, like_q, limit),
         ).fetchall()
