@@ -1,7 +1,18 @@
 """SQLite connection factory and schema bootstrap for Voce."""
 
+import re
 import sqlite3
 from voce.config import settings
+
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_ALLOWED_COL_TYPES = {"INTEGER", "TEXT", "REAL", "BLOB", "NUMERIC"}
+
+
+def _safe_ident(name: str) -> str:
+    """Return *name* quoted for use as a SQL identifier, or raise ValueError."""
+    if not _IDENT_RE.match(name):
+        raise ValueError(f"Invalid SQL identifier: {name!r}")
+    return f'"{name}"'
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS articles (
@@ -80,9 +91,14 @@ def _add_column_if_missing(
     inspect ``PRAGMA table_info`` and conditionally issue the ``ALTER TABLE``.
     Idempotent; safe to call on every bootstrap.
     """
-    cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    col_type_upper = col_type.upper()
+    if col_type_upper not in _ALLOWED_COL_TYPES:
+        raise ValueError(f"Unsupported column type: {col_type!r}")
+    safe_table = _safe_ident(table)
+    safe_column = _safe_ident(column)
+    cols = {row[1] for row in conn.execute(f"PRAGMA table_info({safe_table})")}
     if column not in cols:
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+        conn.execute(f"ALTER TABLE {safe_table} ADD COLUMN {safe_column} {col_type_upper}")
 
 
 def get_connection() -> sqlite3.Connection:
