@@ -54,3 +54,19 @@ def test_search_by_body_text(client):
 def test_search_missing_q_returns_422(client):
     resp = client.get("/api/search")
     assert resp.status_code == 422
+
+
+def test_search_includes_articles_without_reading_state(client):
+    conn = app.dependency_overrides[get_conn]()
+    conn.execute(
+        "INSERT INTO articles (id, section, title, published_at, url, body_html, body_text) "
+        "VALUES ('a3','mathematics','Graph Theory','2024-01-03T00:00:00Z','https://x.com/3','','Graph theory concepts.')"
+    )
+    conn.commit()
+
+    resp = client.get("/api/search?q=Graph")
+    assert resp.status_code == 200
+    data = resp.json()
+    match = next((item for item in data if item["id"] == "a3"), None)
+    assert match is not None
+    assert match["status"] == "unread"
