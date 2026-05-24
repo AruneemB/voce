@@ -101,9 +101,9 @@ def client_two_articles():
     conn.close()
 
 
-def test_state_upsert_creates_row_when_none_exists(client):
-    """UPSERT path: state endpoint works even with no pre-existing reading_state row."""
-    # Use a fresh article without a reading_state row
+@pytest.fixture
+def client_no_reading_state():
+    """Article exists but has no reading_state row — exercises the UPSERT INSERT branch."""
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
@@ -115,9 +115,13 @@ def test_state_upsert_creates_row_when_none_exists(client):
     conn.commit()
     app.dependency_overrides[get_conn] = lambda: conn
     with TestClient(app, headers={"host": "127.0.0.1:8765"}) as c:
-        resp = c.post("/api/articles/art2/state", json={"status": "queued"})
+        yield c
     app.dependency_overrides.clear()
     conn.close()
+
+
+def test_state_upsert_creates_row_when_none_exists(client_no_reading_state):
+    resp = client_no_reading_state.post("/api/articles/art2/state", json={"status": "queued"})
     assert resp.status_code == 200
     assert resp.json()["status"] == "queued"
 
@@ -129,7 +133,7 @@ def test_queue_empty_when_no_articles_queued(client):
 
 
 def test_queue_excludes_unread_and_listened(client_two_articles):
-    c, conn = client_two_articles
+    c, _conn = client_two_articles
     c.post("/api/articles/art1/state", json={"status": "listened"})
     resp = c.get("/api/queue")
     assert resp.status_code == 200
