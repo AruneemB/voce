@@ -71,3 +71,54 @@ def test_audio_trigger_returns_202_pending(client):
 def test_audio_trigger_404_for_missing_article(client):
     resp = client.post("/api/articles/does-not-exist/audio")
     assert resp.status_code == 404
+
+
+@pytest.fixture
+def client_with_audio_cache(tmp_path):
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    bootstrap_schema(conn)
+    conn.execute(
+        "INSERT INTO articles (id, section, title, published_at, url, body_html, body_text) "
+        "VALUES (?,?,?,?,?,?,?)",
+        ("art1", "physics", "Test Article", "2024-01-01T00:00:00Z",
+         "https://example.com/1", "", "Body text here."),
+    )
+    mp3 = tmp_path / "art1.mp3"
+    mp3.write_bytes(b"fake-mp3-data")
+    conn.execute(
+        "INSERT INTO audio_cache (article_id, file_path, voice_id, duration_sec) VALUES (?,?,?,?)",
+        ("art1", str(mp3), "voice-test", 125),
+    )
+    conn.commit()
+
+    previous = app.dependency_overrides.get(get_conn)
+    app.dependency_overrides[get_conn] = lambda: conn
+    try:
+        with TestClient(app, headers={"host": "127.0.0.1:8765"}) as c:
+            yield c
+    finally:
+        if previous is None:
+            app.dependency_overrides.pop(get_conn, None)
+        else:
+            app.dependency_overrides[get_conn] = previous
+        conn.close()
+
+
+def test_audio_status_cached(client_with_audio_cache):
+    resp = client_with_audio_cache.get("/api/articles/art1/audio/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["cached"] is True
+    assert data["url"] == "/api/articles/art1/audio/stream"
+    assert data["duration_sec"] == 125
+    assert data["pending"] is False
+
+
+def test_audio_trigger_returns_ready_when_cached(client_with_audio_cache):
+    resp = client_with_audio_cache.post("/api/articles/art1/audio")
+    assert resp.status_code == 202
+    data = resp.json()
+    assert data["status"] == "ready"
+    assert "url" in data
