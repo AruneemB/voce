@@ -12,25 +12,29 @@ from voce.feeds import refresh_all_feeds
 
 
 def _refresh_job(conn_factory: Callable[[], sqlite3.Connection]) -> None:
-    conn = conn_factory()
+    conn: sqlite3.Connection | None = None
     try:
+        conn = conn_factory()
         results = refresh_all_feeds(conn)
         logger.info(f"Scheduled feed refresh complete: {results}")
     except Exception as exc:
         logger.error(f"Scheduled feed refresh failed: {exc}")
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 def _sweep_job(conn_factory: Callable[[], sqlite3.Connection]) -> None:
-    conn = conn_factory()
+    conn: sqlite3.Connection | None = None
     try:
+        conn = conn_factory()
         count = sweep_expired_cache(conn)
         logger.info(f"Scheduled cache sweep removed {count} expired files")
     except Exception as exc:
         logger.error(f"Scheduled cache sweep failed: {exc}")
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 def build_scheduler(conn_factory: Callable[[], sqlite3.Connection]) -> BackgroundScheduler:
