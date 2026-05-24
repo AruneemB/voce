@@ -18,9 +18,9 @@ Not all endpoints described in this reference are implemented yet. The table bel
 | `GET /api/search` | Planned | 10 |
 | `GET /api/queue` | Planned | 9 |
 | `POST /api/articles/{id}/state` | Planned | 9 |
-| `POST /api/articles/{id}/audio` | Planned | 7–8 |
-| `GET /api/articles/{id}/audio/status` | Planned | 7–8 |
-| `GET /api/articles/{id}/audio/stream` | Planned | 7–8 |
+| `POST /api/articles/{id}/audio` | Planned | 8 |
+| `GET /api/articles/{id}/audio/status` | Planned | 8 |
+| `GET /api/articles/{id}/audio/stream` | Planned | 8 |
 
 > **Note on search:** The frontend (`app.js`) attempts `GET /api/search?q=` first and falls back to `GET /api/articles?q=` on a `404`. This means full-text search works today via the `q` parameter on `/api/articles`. The dedicated `/api/search` endpoint (with richer response metadata) is a Phase 10 addition.
 
@@ -284,7 +284,9 @@ Updates the reading status of an article.
 
 ---
 
-## Audio _(planned — Phases 7–8)_
+## Audio _(planned — Phase 8)_
+
+> The synthesis back-end (`synthesize_article()` in `tts.py`) is fully implemented and tested. Phase 8 wires it to these HTTP routes and adds the in-page audio player.
 
 ### `POST /api/articles/{article_id}/audio`
 

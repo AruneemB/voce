@@ -37,8 +37,8 @@ The test suite is in `tests/`. Tests are organised by module:
 | `test_article.py` | HTML cleaning, LaTeX substitutions, preamble format |
 | `test_api.py` | FastAPI routes, middleware, response shapes |
 | `test_frontend.py` | Static file serving, HTML element IDs, CDN tags, JS function definitions, CSS selectors |
-| `test_tts_chunking.py` | `chunk_text` boundary algorithm, `synthesize_article` pipeline (ElevenLabs mocked) |
-| `test_cache.py` | `sweep_expired_cache` expiry logic and file deletion, `get_cache_stats` aggregates |
+| `test_tts_chunking.py` | `chunk_text` (sentence/space/hard-split boundaries, `! `/ `? ` markers, last-boundary selection, empty-chunk filtering), `synthesize_chunk` (bytes-joining, error wrapping), `get_audio_duration` (mutagen delegation), `synthesize_article` (cache hit, stale-file recovery, 50 k-char cost guard, `TTSSynthesisError` propagation) |
+| `test_cache.py` | `sweep_expired_cache` (single and batch expiry, settings-default TTL, missing-file tolerance, same-day boundary), `get_cache_stats` (empty, single-entry, multi-entry, post-sweep state) |
 
 Fixtures live in `tests/fixtures/`. The RSS fixture (`sample_feed.xml`) contains three representative entries covering normal articles, missing fields, and audio enclosures.
 
@@ -53,6 +53,38 @@ Feed tests use the XML fixture rather than making live HTTP requests. HTTP calls
 API and frontend tests both use FastAPI's `TestClient`. All `TestClient` instances supply `headers={"host": "127.0.0.1:8765"}` so that `LocalhostOnlyMiddleware` admits the test requests — this applies to static file requests (`/static/app.js`, `/static/styles.css`) as well as JSON API calls.
 
 Frontend tests verify structure rather than behaviour: they fetch the served files as text and use `in` membership checks (for element IDs, CDN URLs, function names, CSS selectors) and `re.search` (for `PAGE_SIZE = 30`). This approach confirms the files are wired correctly without a JavaScript runtime.
+
+### Testing the TTS layer
+
+TTS tests never call ElevenLabs. Every test that exercises `synthesize_chunk` or `synthesize_article` uses one of two mocking strategies:
+
+**Mocking the ElevenLabs client class:**
+
+```python
+@patch("voce.tts.ElevenLabs")
+def test_synthesize_article_writes_file_and_inserts_cache(mock_elevenlabs_cls, mem_conn_with_article, tmp_path):
+    mock_client = MagicMock()
+    mock_client.text_to_speech.convert.return_value = iter([b"\xff\xfb" + b"\x00" * 100])
+    mock_elevenlabs_cls.return_value = mock_client
+    ...
+```
+
+**Mocking mutagen directly** (for `get_audio_duration` or to avoid needing valid MP3 bytes):
+
+```python
+with patch("voce.tts.get_audio_duration", return_value=5.0):
+    out_path = synthesize_article("art1", conn)
+
+# or, to test get_audio_duration itself:
+mock_audio = MagicMock()
+mock_audio.info.length = 42.5
+with patch("voce.tts.MP3", return_value=mock_audio):
+    result = get_audio_duration(b"fake-bytes")
+```
+
+**Isolating disk writes:** Swap `cfg.settings.audio_cache_dir` to `tmp_path` before calling `synthesize_article`, and restore it in a `finally` block. pytest cleans up `tmp_path` automatically.
+
+**Testing the cost guard:** Set `body_text` to a string longer than 50,000 characters via an `UPDATE` on the in-memory connection, then assert `ArticleTextMissingError` is raised. No network access is needed.
 
 ---
 

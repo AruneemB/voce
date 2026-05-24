@@ -1,8 +1,10 @@
 import sqlite3
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
+from voce import config as cfg
 from voce.cache import get_cache_stats, sweep_expired_cache
 from voce.db import bootstrap_schema
 
@@ -111,6 +113,25 @@ def test_sweep_raises_for_negative_ttl_days(mem_conn):
         sweep_expired_cache(mem_conn, ttl_days=-1)
 
 
+def test_sweep_deletes_all_expired_entries_in_batch(mem_conn, tmp_path):
+    for article_id in ["art1", "art2"]:
+        mp3 = tmp_path / f"{article_id}.mp3"
+        mp3.write_bytes(b"fake")
+        _insert_cache_row(mem_conn, article_id, str(mp3), "2000-01-01T00:00:00Z")
+    count = sweep_expired_cache(mem_conn, ttl_days=1)
+    assert count == 2
+    assert mem_conn.execute("SELECT COUNT(*) FROM audio_cache").fetchone()[0] == 0
+
+
+def test_sweep_uses_settings_ttl_when_ttl_days_is_none(mem_conn, tmp_path):
+    mp3 = tmp_path / "art1.mp3"
+    mp3.write_bytes(b"fake")
+    _insert_cache_row(mem_conn, "art1", str(mp3), "2000-01-01T00:00:00Z")
+    with patch.object(cfg.settings, "audio_cache_ttl_days", 1):
+        count = sweep_expired_cache(mem_conn)  # ttl_days=None → falls back to settings
+    assert count == 1
+
+
 # ── get_cache_stats tests ─────────────────────────────────────────────────────
 
 def test_get_cache_stats_empty(mem_conn):
@@ -128,3 +149,27 @@ def test_get_cache_stats_with_entries(mem_conn):
     assert stats["total_files"] == 2
     assert stats["oldest_played_at"] == "2024-01-01T00:00:00Z"
     assert stats["newest_played_at"] == "2024-06-01T00:00:00Z"
+
+
+def test_get_cache_stats_single_entry_oldest_equals_newest(mem_conn):
+    _insert_cache_row(mem_conn, "art1", "/tmp/art1.mp3", "2024-06-15T12:00:00Z")
+    stats = get_cache_stats(mem_conn)
+    assert stats["total_files"] == 1
+    assert stats["oldest_played_at"] == "2024-06-15T12:00:00Z"
+    assert stats["newest_played_at"] == "2024-06-15T12:00:00Z"
+
+
+def test_get_cache_stats_reflects_state_after_sweep(mem_conn, tmp_path):
+    mp3_old = tmp_path / "art1.mp3"
+    mp3_old.write_bytes(b"old")
+    mp3_new = tmp_path / "art2.mp3"
+    mp3_new.write_bytes(b"new")
+    _insert_cache_row(mem_conn, "art1", str(mp3_old), "2000-01-01T00:00:00Z")
+    _insert_cache_row(mem_conn, "art2", str(mp3_new), "2099-01-01T00:00:00Z")
+
+    sweep_expired_cache(mem_conn, ttl_days=1)
+    stats = get_cache_stats(mem_conn)
+
+    assert stats["total_files"] == 1
+    assert stats["oldest_played_at"] == "2099-01-01T00:00:00Z"
+    assert stats["newest_played_at"] == "2099-01-01T00:00:00Z"

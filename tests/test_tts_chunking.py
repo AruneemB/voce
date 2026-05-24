@@ -5,7 +5,8 @@ import pytest
 
 from voce.db import bootstrap_schema
 from voce.exceptions import ArticleNotFoundError, ArticleTextMissingError
-from voce.tts import ELEVENLABS_CHAR_LIMIT, chunk_text, synthesize_article
+from voce.exceptions import TTSSynthesisError
+from voce.tts import ELEVENLABS_CHAR_LIMIT, chunk_text, get_audio_duration, synthesize_article, synthesize_chunk
 
 
 # ── chunk_text tests ──────────────────────────────────────────────────────────
@@ -52,6 +53,68 @@ def test_chunk_text_hard_splits_when_no_space():
 def test_chunk_text_raises_for_non_positive_limit():
     with pytest.raises(ValueError, match="limit must be a positive integer"):
         chunk_text("some text", limit=0)
+
+
+def test_chunk_text_splits_at_exclamation_boundary():
+    text = "A" * 100 + "! " + "B" * 3000
+    result = chunk_text(text)
+    assert result[0].endswith("! ")
+    for chunk in result:
+        assert len(chunk) <= ELEVENLABS_CHAR_LIMIT
+
+
+def test_chunk_text_splits_at_question_boundary():
+    text = "A" * 100 + "? " + "B" * 3000
+    result = chunk_text(text)
+    assert result[0].endswith("? ")
+    for chunk in result:
+        assert len(chunk) <= ELEVENLABS_CHAR_LIMIT
+
+
+def test_chunk_text_picks_latest_sentence_boundary_within_limit():
+    # ". " at position 100, "! " at position 200 — max() picks the later one
+    text = "A" * 100 + ". " + "A" * 98 + "! " + "B" * 3000
+    result = chunk_text(text)
+    assert result[0].endswith("! ")
+
+
+def test_chunk_text_produces_no_empty_strings():
+    cases = [
+        "x" * ELEVENLABS_CHAR_LIMIT,
+        "x" * (ELEVENLABS_CHAR_LIMIT * 3),
+        "Hello world. " * 300,
+        "word " * 600,
+    ]
+    for text in cases:
+        result = chunk_text(text)
+        assert all(c for c in result), f"Empty chunk found for input length {len(text)}"
+
+
+# ── synthesize_chunk tests ────────────────────────────────────────────────────
+
+def test_synthesize_chunk_joins_bytes_from_iterator():
+    mock_client = MagicMock()
+    mock_client.text_to_speech.convert.return_value = iter([b"abc", b"def", b"ghi"])
+    result = synthesize_chunk("some text", mock_client)
+    assert result == b"abcdefghi"
+
+
+def test_synthesize_chunk_raises_tts_synthesis_error_on_api_failure():
+    mock_client = MagicMock()
+    mock_client.text_to_speech.convert.side_effect = RuntimeError("API error")
+    with pytest.raises(TTSSynthesisError) as exc_info:
+        synthesize_chunk("some text", mock_client)
+    assert exc_info.value.article_id == "unknown"
+
+
+# ── get_audio_duration tests ──────────────────────────────────────────────────
+
+def test_get_audio_duration_returns_length_via_mutagen():
+    mock_audio = MagicMock()
+    mock_audio.info.length = 42.5
+    with patch("voce.tts.MP3", return_value=mock_audio):
+        result = get_audio_duration(b"fake-mp3-bytes")
+    assert result == 42.5
 
 
 # ── synthesize_article tests ──────────────────────────────────────────────────
@@ -127,6 +190,30 @@ def test_synthesize_article_returns_cached_path_without_calling_elevenlabs(
         "SELECT last_played_at FROM audio_cache WHERE article_id='art1'"
     ).fetchone()
     assert row["last_played_at"] != "2024-01-01T00:00:00Z"
+
+
+def test_synthesize_article_refuses_body_text_exceeding_50k_chars(mem_conn_with_article):
+    oversized = "x" * 50_001
+    mem_conn_with_article.execute("UPDATE articles SET body_text=? WHERE id='art1'", (oversized,))
+    mem_conn_with_article.commit()
+    with pytest.raises(ArticleTextMissingError):
+        synthesize_article("art1", mem_conn_with_article)
+
+
+@patch("voce.tts.ElevenLabs")
+def test_synthesize_article_propagates_tts_synthesis_error(mock_elevenlabs_cls, mem_conn_with_article, tmp_path):
+    mock_client = MagicMock()
+    mock_client.text_to_speech.convert.side_effect = RuntimeError("ElevenLabs down")
+    mock_elevenlabs_cls.return_value = mock_client
+
+    from voce import config as cfg
+    original_dir = cfg.settings.audio_cache_dir
+    cfg.settings.audio_cache_dir = tmp_path
+    try:
+        with pytest.raises(TTSSynthesisError):
+            synthesize_article("art1", mem_conn_with_article)
+    finally:
+        cfg.settings.audio_cache_dir = original_dir
 
 
 @patch("voce.tts.ElevenLabs")
