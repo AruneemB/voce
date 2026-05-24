@@ -5,6 +5,7 @@ import pathlib
 import sqlite3
 from unittest.mock import MagicMock, patch
 
+import certifi
 import feedparser
 import httpx
 import pytest
@@ -102,6 +103,46 @@ def test_fetch_feed_timeout_raises():
 # ---------------------------------------------------------------------------
 # refresh_all_feeds tests
 # ---------------------------------------------------------------------------
+
+
+def test_refresh_all_feeds_uses_certifi(mem_conn):
+    """refresh_all_feeds must create its httpx.Client with certifi verification."""
+    with patch("voce.feeds.httpx.Client") as mock_cls, \
+         patch("voce.feeds.fetch_feed") as mock_fetch:
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=ctx)
+        ctx.__exit__ = MagicMock(return_value=False)
+        mock_cls.return_value = ctx
+        mock_fetch.return_value = feedparser.FeedParserDict(entries=[])
+
+        refresh_all_feeds(mem_conn)
+
+    kwargs = mock_cls.call_args.kwargs
+    assert kwargs.get("verify") == certifi.where(), (
+        "httpx.Client must pass verify=certifi.where() for reliable TLS on all platforms"
+    )
+
+
+def test_refresh_all_feeds_follows_redirects(mem_conn):
+    """refresh_all_feeds must create its httpx.Client with follow_redirects=True.
+
+    The Quanta Magazine feed URLs return 301 redirects; without this flag
+    httpx >= 0.20 will not follow them and the feed will appear empty.
+    """
+    with patch("voce.feeds.httpx.Client") as mock_cls, \
+         patch("voce.feeds.fetch_feed") as mock_fetch:
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=ctx)
+        ctx.__exit__ = MagicMock(return_value=False)
+        mock_cls.return_value = ctx
+        mock_fetch.return_value = feedparser.FeedParserDict(entries=[])
+
+        refresh_all_feeds(mem_conn)
+
+    kwargs = mock_cls.call_args.kwargs
+    assert kwargs.get("follow_redirects") is True, (
+        "httpx.Client must pass follow_redirects=True to handle RSS feed redirects"
+    )
 
 
 def test_refresh_all_feeds_skips_failing(mem_conn):
