@@ -104,7 +104,9 @@ The audio cache lives in `data/audio_cache/`. Each synthesised article produces 
 
 **Manual sweep:** Run `python -m voce --sweep-cache` to trigger an immediate sweep and exit.
 
-**Manual deletion:** You can delete individual MP3 files directly from `data/audio_cache/`. Voce will re-synthesise them on demand. If the database row in `audio_cache` still exists but the file is gone, the next stream request will fail with a 404 — simply re-trigger synthesis from the UI.
+**Manual deletion:** You can delete individual MP3 files directly from `data/audio_cache/`. If the corresponding row in `audio_cache` still exists but the file is gone, Voce detects the stale entry when synthesis is next requested, deletes the orphan row automatically, and re-synthesises — no manual intervention is needed.
+
+**Cost guard:** Articles whose full narration text (attribution preamble + body) exceeds 50,000 characters are refused rather than forwarded to ElevenLabs. A `WARNING` log line is emitted and no API call is made, preventing runaway spend on very long articles.
 
 ---
 
