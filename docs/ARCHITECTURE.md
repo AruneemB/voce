@@ -43,17 +43,19 @@ Quanta Magazine RSS feeds
   │  HTTP layer │──────────────────────────────┘
   └─────────────┘
          │ HTTP/JSON                     POST /api/articles/{id}/audio
-         │ GET /audio/status  ◄──────────────────────────────────────┐
-         │ GET /audio/stream  ──────────────────────────────────────┐ │
-         ▼                                                          │ │
-  Browser (localhost:8765)                                          │ │
-  index.html + app.js + Tailwind CDN + htmx                        │ │
-         │                                                          │ │
-         │  renderAudioSection / pollAudioStatus                    │ │
-         └──────────────────────────────────────────────────────────┘ │
-                                                                       │
-         _synthesis_in_progress (module-level set) ──────────────────┘
+         │ GET /api/articles/{id}/audio/status  ◄──────────────────┐
+         │ GET /api/articles/{id}/audio/stream  ────────────────────┐│
+         ▼                                                          ││
+  Browser (localhost:8765)                                          ││
+  index.html + app.js + Tailwind CDN + htmx                        ││
+         │                                                          ││
+         │  renderAudioSection / pollAudioStatus                    ││
+         │  (currentArticleId guard aborts stale polls)            ││
+         └──────────────────────────────────────────────────────────┘│
+                                                                      │
+         _synthesis_in_progress (module-level set) ─────────────────┘
          fire-and-forget executor → synthesize_article() in thread
+         (_run() opens own conn; releases in finally block)
 ```
 
 ---
@@ -165,7 +167,7 @@ Navigation uses `history.pushState` so the URL reflects the selected article (`#
 
 **XSS protection** — Every API-sourced string injected into `innerHTML` is passed through `escapeHtml()`, which encodes `&`, `<`, `>`, `"`, and `'` as HTML entities. Reading status strings used in CSS class names are validated against a `VALID_STATUSES` whitelist (`"unread"`, `"queued"`, `"listened"`) before interpolation; any unrecognised value falls back to `"unread"` rather than being used as-is. This ensures that malicious content in article titles, author names, or summaries cannot execute as HTML or JavaScript.
 
-When an article is opened, `loadArticleDetail()` fetches `/api/articles/{id}/audio/status` immediately after rendering the article body. Based on the response, `renderAudioSection()` either shows an `<audio controls>` player (if audio is cached), a Quanta-narration player with a label (if the article has a `quanta_audio_url` from the RSS feed), or a "Listen with Voce" button. Clicking the button calls `requestAudio()`, which posts to `/api/articles/{id}/audio` and then calls `pollAudioStatus()` if the response is `"pending"`. Polling runs every 2 seconds for up to 120 seconds; on completion, `renderAudioSection()` swaps in the audio player. Reading status mutation buttons are not yet wired (planned for Phase 9).
+When an article is opened, `loadArticleDetail()` sets `currentArticleId` then fetches `/api/articles/{id}/audio/status` in a nested try/catch isolated from the article fetch. If the status request fails for any reason, `renderAudioSection()` is called with a default `{ cached: false, pending: false }` payload so the generate button always appears. Based on the response, `renderAudioSection()` shows an `<audio controls>` player (if audio is cached), a Quanta-narration player with a label (if `quanta_audio_url` is set), or a "Listen with Voce" button. The button carries no `onclick` attribute; a `click` listener is attached via `addEventListener` after the HTML is written. Clicking the button calls `requestAudio()`, which posts to `/api/articles/{id}/audio` and calls `pollAudioStatus()` if the response is `"pending"`. `pollAudioStatus()` checks `articleId === currentArticleId` at the start of each tick and aborts silently if the user has navigated away. Polling runs every 2 seconds for up to 120 seconds; on completion, `renderAudioSection()` swaps in the audio player. Reading status mutation buttons are not yet wired (planned for Phase 9).
 
 ---
 

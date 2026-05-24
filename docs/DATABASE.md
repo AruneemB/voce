@@ -13,6 +13,7 @@ Voce stores all state in a single SQLite file at `data/voce.db`. The schema is b
 - **WAL mode.** `PRAGMA journal_mode=WAL` is set on every connection for better concurrent read performance.
 - **Foreign keys enforced.** `PRAGMA foreign_keys=ON` is set on every connection.
 - **Idempotent column migrations.** SQLite does not support `ALTER TABLE … ADD COLUMN IF NOT EXISTS`. New columns on existing tables are added via `_add_column_if_missing()` in `bootstrap_schema()`, which inspects `PRAGMA table_info` before issuing the `ALTER TABLE`. This is called after the main `executescript()` DDL block and is safe to run on every startup.
+- **Safe SQL identifiers.** `_add_column_if_missing()` passes table and column names through `_safe_ident()`, which validates them against `^[A-Za-z_][A-Za-z0-9_]*$` and wraps them in double-quotes before interpolating into `PRAGMA` and `ALTER TABLE` statements. Column types are validated against a fixed allowlist (`INTEGER`, `TEXT`, `REAL`, `BLOB`, `NUMERIC`). This prevents SQL injection through identifier values, which cannot be parameterised with `?` placeholders in SQLite.
 
 ---
 
