@@ -4,6 +4,7 @@ import asyncio
 import ipaddress
 import sqlite3
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query
@@ -284,10 +285,13 @@ async def trigger_audio(article_id: str, conn: ConnDep) -> dict:
     if article_id in _synthesis_in_progress:
         return {"status": "pending"}
     cache_row = conn.execute(
-        "SELECT 1 FROM audio_cache WHERE article_id=?", (article_id,)
+        "SELECT file_path FROM audio_cache WHERE article_id=?", (article_id,)
     ).fetchone()
     if cache_row:
-        return {"status": "ready", "url": f"/api/articles/{article_id}/audio/stream"}
+        if Path(cache_row["file_path"]).exists():
+            return {"status": "ready", "url": f"/api/articles/{article_id}/audio/stream"}
+        conn.execute("DELETE FROM audio_cache WHERE article_id=?", (article_id,))
+        conn.commit()
     article_row = conn.execute(
         "SELECT 1 FROM articles WHERE id=?", (article_id,)
     ).fetchone()
@@ -318,12 +322,15 @@ def get_audio_status(article_id: str, conn: ConnDep) -> AudioStatusOut:
         (article_id,),
     ).fetchone()
     if row:
-        return AudioStatusOut(
-            cached=True,
-            url=f"/api/articles/{article_id}/audio/stream",
-            duration_sec=row["duration_sec"],
-            pending=article_id in _synthesis_in_progress,
-        )
+        if Path(row["file_path"]).exists():
+            return AudioStatusOut(
+                cached=True,
+                url=f"/api/articles/{article_id}/audio/stream",
+                duration_sec=row["duration_sec"],
+                pending=article_id in _synthesis_in_progress,
+            )
+        conn.execute("DELETE FROM audio_cache WHERE article_id=?", (article_id,))
+        conn.commit()
     return AudioStatusOut(
         cached=False,
         url=None,
@@ -340,6 +347,10 @@ def stream_audio(article_id: str, conn: ConnDep) -> FileResponse:
     ).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="Audio not found")
+    if not Path(row["file_path"]).exists():
+        conn.execute("DELETE FROM audio_cache WHERE article_id=?", (article_id,))
+        conn.commit()
+        raise HTTPException(status_code=404, detail="Audio file missing")
     conn.execute(
         "UPDATE audio_cache SET last_played_at=datetime('now') WHERE article_id=?",
         (article_id,),
