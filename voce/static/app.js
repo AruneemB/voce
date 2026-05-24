@@ -154,8 +154,11 @@ function showToast(message, type = 'info') {
 
 // ── Refresh ───────────────────────────────────────────────────────────────────
 async function triggerRefresh() {
+  showToast('Refreshing feeds…', 'info');
   try {
-    await safeFetch('/api/refresh', { method: 'POST' });
+    const data = await safeFetch('/api/refresh', { method: 'POST' });
+    const total = Object.values(data).reduce((a, v) => a + v[0], 0);
+    showToast(`Refresh complete. ${total} new articles.`, 'success');
     loadSections();
     loadArticles(true);
   } catch (_) {}
