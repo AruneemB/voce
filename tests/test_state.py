@@ -71,3 +71,102 @@ def test_scheduler_has_two_jobs():
     job_ids = {j.id for j in s.get_jobs()}
     assert "feed_refresh" in job_ids
     assert "cache_sweep" in job_ids
+
+
+# ── Edge case and scheduler configuration tests ───────────────────────────────
+
+
+@pytest.fixture
+def client_two_articles():
+    """Fixture with two articles seeded for ordering and exclusion tests."""
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    bootstrap_schema(conn)
+    for art_id, url in [("art1", "https://x.com/1"), ("art2", "https://x.com/2")]:
+        conn.execute(
+            "INSERT INTO articles (id, section, title, published_at, url, body_html, body_text) "
+            "VALUES (?, 'physics', 'T', '2024-01-01T00:00:00Z', ?, '', '.')",
+            (art_id, url),
+        )
+        conn.execute(
+            "INSERT INTO reading_state (article_id, status) VALUES (?, 'unread')", (art_id,)
+        )
+    conn.commit()
+    app.dependency_overrides[get_conn] = lambda: conn
+    with TestClient(app, headers={"host": "127.0.0.1:8765"}) as c:
+        yield c, conn
+    app.dependency_overrides.clear()
+    conn.close()
+
+
+def test_state_upsert_creates_row_when_none_exists(client):
+    """UPSERT path: state endpoint works even with no pre-existing reading_state row."""
+    # Use a fresh article without a reading_state row
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    bootstrap_schema(conn)
+    conn.execute(
+        "INSERT INTO articles (id, section, title, published_at, url, body_html, body_text) "
+        "VALUES ('art2','physics','T2','2024-01-01T00:00:00Z','https://y.com','','.')"
+    )
+    conn.commit()
+    app.dependency_overrides[get_conn] = lambda: conn
+    with TestClient(app, headers={"host": "127.0.0.1:8765"}) as c:
+        resp = c.post("/api/articles/art2/state", json={"status": "queued"})
+    app.dependency_overrides.clear()
+    conn.close()
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "queued"
+
+
+def test_queue_empty_when_no_articles_queued(client):
+    resp = client.get("/api/queue")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_queue_excludes_unread_and_listened(client_two_articles):
+    c, conn = client_two_articles
+    c.post("/api/articles/art1/state", json={"status": "listened"})
+    resp = c.get("/api/queue")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_queue_ordering_by_updated_at(client_two_articles):
+    c, conn = client_two_articles
+    # Set different updated_at values directly so the order is deterministic
+    conn.execute(
+        "INSERT INTO reading_state (article_id, status, updated_at) VALUES ('art2','queued','2024-01-01T10:00:00Z') "
+        "ON CONFLICT(article_id) DO UPDATE SET status='queued', updated_at='2024-01-01T10:00:00Z'"
+    )
+    conn.execute(
+        "INSERT INTO reading_state (article_id, status, updated_at) VALUES ('art1','queued','2024-01-01T11:00:00Z') "
+        "ON CONFLICT(article_id) DO UPDATE SET status='queued', updated_at='2024-01-01T11:00:00Z'"
+    )
+    conn.commit()
+    resp = c.get("/api/queue")
+    assert resp.status_code == 200
+    ids = [item["id"] for item in resp.json()]
+    assert ids[0] == "art2"
+    assert ids[1] == "art1"
+
+
+def test_scheduler_feed_refresh_job_config():
+    from voce.config import settings
+    from voce.scheduler import build_scheduler
+    s = build_scheduler(lambda: None)
+    job = next(j for j in s.get_jobs() if j.id == "feed_refresh")
+    # Interval trigger stores the interval as a timedelta; check minutes field
+    assert job.trigger.interval.seconds // 60 == settings.feed_refresh_minutes
+
+
+def test_scheduler_cache_sweep_job_config():
+    from voce.scheduler import build_scheduler
+    s = build_scheduler(lambda: None)
+    job = next(j for j in s.get_jobs() if j.id == "cache_sweep")
+    # Cron trigger; verify the hour field is set to 3
+    fields = {f.name: f for f in job.trigger.fields}
+    assert str(fields["hour"]) == "3"
