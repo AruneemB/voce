@@ -288,7 +288,7 @@ Updates the reading status of an article.
 
 ### `POST /api/articles/{article_id}/audio`
 
-Triggers on-demand TTS synthesis for an article. Returns immediately in all cases — synthesis runs in a background thread. Checking progress requires polling `GET /audio/status`.
+Triggers on-demand TTS synthesis for an article. Returns immediately in all cases — synthesis runs in a background thread. Checking progress requires polling `GET /api/articles/{article_id}/audio/status`.
 
 **Response** — `202 Accepted` (synthesis started or already in progress)
 
@@ -317,7 +317,7 @@ Triggers on-demand TTS synthesis for an article. Returns immediately in all case
 
 ### `GET /api/articles/{article_id}/audio/status`
 
-Returns the current audio state for an article without triggering synthesis. The frontend polls this endpoint (every 2 seconds, up to 60 attempts) after `POST /audio` returns `"pending"`.
+Returns the current audio state for an article without triggering synthesis. The frontend polls this endpoint (every 2 seconds, up to 60 attempts) after `POST /api/articles/{article_id}/audio` returns `"pending"`.
 
 **Response** — `200 OK`
 
@@ -332,12 +332,14 @@ Returns the current audio state for an article without triggering synthesis. The
 
 | Field | Type | Nullable | Description |
 |-------|------|----------|-------------|
-| `cached` | boolean | No | `true` if an `audio_cache` row exists for this article |
+| `cached` | boolean | No | `true` if an `audio_cache` row exists *and* the MP3 file is present on disk |
 | `url` | string | Yes | Stream URL (`/api/articles/{id}/audio/stream`) when `cached` is true; `null` otherwise |
 | `duration_sec` | integer | Yes | Audio duration in seconds when `cached` is true; `null` otherwise |
 | `pending` | boolean | No | `true` if synthesis is currently running in a background thread |
 
 When `cached` is `false` and `pending` is `false`, no synthesis has been started — click "Listen with Voce" to begin.
+
+> **Stale-row recovery:** If an `audio_cache` row exists but the MP3 file has been deleted from disk, the endpoint removes the stale row and returns `cached: false`. The same recovery runs in `POST /api/articles/{article_id}/audio` and `GET /api/articles/{article_id}/audio/stream`.
 
 ---
 
@@ -356,7 +358,7 @@ Serves the cached MP3 file via `FileResponse`. Also updates `audio_cache.last_pl
 
 | Status | Condition |
 |--------|-----------|
-| `404 Not Found` | No audio cached for this article — trigger synthesis first via `POST /audio` |
+| `404 Not Found` | No audio cached for this article — trigger synthesis first via `POST /api/articles/{article_id}/audio` |
 
 ---
 
