@@ -104,9 +104,19 @@ async function loadArticleDetail(articleId) {
       <h1 class="text-2xl font-bold leading-tight mb-2">${escapeHtml(article.title)}</h1>
       <p class="byline text-sm text-gray-500 mb-4">${escapeHtml(article.author || '')} · ${formatDate(article.published_at)}</p>
       <a href="${escapeHtml(article.url)}" target="_blank" rel="noopener" class="quanta-link">Open in Quanta ↗</a>
+      <div id="state-buttons" class="flex gap-2 my-2">
+        <button data-state-action="queued"   class="btn-state">Queue</button>
+        <button data-state-action="listened" class="btn-state">Mark Listened</button>
+        <button data-state-action="unread"   class="btn-state">Mark Unread</button>
+      </div>
+      <p id="current-state" class="text-xs text-gray-500">Status: ${escapeHtml(article.status)}</p>
       <div id="audio-player-section"></div>
       <div class="prose">${paragraphs}</div>
     `;
+
+    document.querySelectorAll('#state-buttons [data-state-action]').forEach(btn => {
+      btn.addEventListener('click', () => setState(articleId, btn.dataset.stateAction));
+    });
 
     history.pushState({ articleId }, '', `#article/${articleId}`);
 
@@ -272,6 +282,23 @@ function formatDuration(seconds) {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60).toString().padStart(2, '0');
   return `${m}:${s}`;
+}
+
+async function setState(articleId, status) {
+  try {
+    const res = await fetch(`/api/articles/${articleId}/state`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    if (!res.ok) throw new Error('state update failed');
+    const data = await res.json();
+    const el = document.getElementById('current-state');
+    if (el) el.textContent = `Status: ${data.status}`;
+    loadSections();
+  } catch (_) {
+    showToast('Failed to update state', 'error');
+  }
 }
 
 async function requestAudio(articleId) {
