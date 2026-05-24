@@ -293,6 +293,7 @@ async function setState(articleId, status) {
     });
     if (!res.ok) throw new Error('state update failed');
     const data = await res.json();
+    if (articleId !== currentArticleId) return;
     const el = document.getElementById('current-state');
     if (el) el.textContent = `Status: ${data.status}`;
     loadSections();
