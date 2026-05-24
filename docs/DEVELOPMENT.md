@@ -33,17 +33,34 @@ The test suite is in `tests/`. Tests are organised by module:
 | `test_skeleton.py` | Package imports and entry point exist |
 | `test_config.py` | Settings loading, API key validation, defaults |
 | `test_db.py` | Schema bootstrap, FTS5 table, triggers, FK cascades |
-| `test_feeds.py` | RSS parsing, upsert logic, retry behaviour |
-| `test_article.py` | HTML cleaning, LaTeX substitutions, preamble format |
-| `test_api.py` | FastAPI routes, middleware, response shapes |
+| `test_feeds.py` | RSS parsing, upsert logic, retry behaviour; httpx.Client created with certifi verification and redirect following |
+| `test_article.py` | HTML cleaning, LaTeX substitutions, preamble format; regression for `None`-attrs nodes produced by lxml |
+| `test_api.py` | FastAPI routes, middleware, response shapes; `GET /api/status` counts (total, enriched, pending) |
 | `test_frontend.py` | Static file serving, HTML element IDs, CDN tags, JS function definitions, CSS selectors |
 | `test_tts_chunking.py` | `chunk_text` (sentence/space/hard-split boundaries, `! `/ `? ` markers, last-boundary selection, empty-chunk filtering), `synthesize_chunk` (bytes-joining, error wrapping), `get_audio_duration` (mutagen delegation), `synthesize_article` (cache hit, stale-file recovery, 50 k-char cost guard, `TTSSynthesisError` propagation) |
 | `test_cache.py` | `sweep_expired_cache` (single and batch expiry, settings-default TTL, missing-file tolerance, same-day boundary), `get_cache_stats` (empty, single-entry, multi-entry, post-sweep state) |
 | `test_api_audio.py` | Audio status (uncached, cached with duration), stream 404 behaviour, stream success with reading-state side-effect, synthesis trigger (202 pending, 202 ready when cached, 404 for missing article) |
-| `test_state.py` | State transitions to queued/listened/unread; `last_played_at` cleared on unread transition; UPSERT creates row when none exists; 422 on invalid status; 404 for missing article; queue endpoint returns only queued articles, returns empty array, excludes other statuses, orders by `updated_at ASC`; scheduler has exactly two jobs (`feed_refresh`, `cache_sweep`) with correct trigger types and interval/cron configuration |
+| `test_state.py` | State transitions to queued/listened/unread; `last_played_at` cleared on unread transition; UPSERT creates row when none exists; 422 on invalid status; 404 for missing article; queue endpoint returns only queued articles, returns empty array, excludes other statuses, orders by `updated_at ASC`; scheduler has exactly two jobs (`feed_refresh`, `cache_sweep`) with correct trigger types and interval/cron configuration; `_refresh_job` calls `enrich_all_unenriched` after `refresh_all_feeds` |
 | `test_search.py` | `GET /api/search` returns matching articles by title and body text; returns empty array for unrecognised terms; returns 422 when `q` is missing; FTS5 triggers populate the virtual table on insert; articles without a `reading_state` row appear in results with status `"unread"` |
 
 Fixtures live in `tests/fixtures/`. The RSS fixture (`sample_feed.xml`) contains three representative entries covering normal articles, missing fields, and audio enclosures.
+
+---
+
+## Windows SSL and redirect notes
+
+Python distributed through the Microsoft Store does not automatically expose the Windows system certificate store to the `ssl` module. Without explicit configuration, every HTTPS request (to the Quanta Magazine RSS feeds and article pages) fails with `CERTIFICATE_VERIFY_FAILED`.
+
+Voce addresses this with two declared dependencies:
+
+- **`certifi`** — provides a bundled CA certificate bundle as a `.pem` file accessible via `certifi.where()`
+- **`pip-system-certs`** — installs a `.pth` file that patches `certifi.where()` at Python startup to return the OS-native certificate bundle instead of certifi's bundled copy. On Windows this is the Windows Certificate Store, which is kept up to date by Windows Update and includes all intermediate certificates.
+
+All `httpx.Client` instances that make external requests pass `verify=certifi.where()` explicitly. After `pip-system-certs` patches certifi, this resolves to the system store.
+
+Additionally, httpx ≥ 0.20 does not follow HTTP redirects by default. The Quanta Magazine feed URLs issue 301 redirects; without `follow_redirects=True` the feeds appear to return empty results. All clients also pass `follow_redirects=True` for this reason.
+
+If you encounter SSL errors during development on a non-Windows platform, ensure the `pip-system-certs` package is installed and that your Python environment has access to the system CA store. On macOS, running `pip install certifi` and the `/Applications/Python 3.x/Install Certificates.command` script (if present) should resolve the issue.
 
 ---
 
