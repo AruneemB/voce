@@ -15,6 +15,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import FileResponse, Response
 
+import certifi
+import httpx
+
+from voce.article import enrich_all_unenriched
 from voce.config import settings
 from voce.db import bootstrap_schema, get_connection
 from voce.feeds import refresh_all_feeds
@@ -126,6 +130,9 @@ async def lifespan(app: FastAPI):
         conn = get_connection()
         try:
             refresh_all_feeds(conn)
+            with httpx.Client(verify=certifi.where(), follow_redirects=True) as client:
+                ok, fail = enrich_all_unenriched(conn, client)
+                logger.info("Startup enrichment: {} ok, {} failed", ok, fail)
         finally:
             conn.close()
 
@@ -501,4 +508,20 @@ def search_articles(
 async def refresh(conn: ConnDep) -> dict:
     loop = asyncio.get_running_loop()
     results = await loop.run_in_executor(None, refresh_all_feeds, conn)
+
+    async def _enrich() -> None:
+        with httpx.Client(verify=certifi.where(), follow_redirects=True) as client:
+            ok, fail = await loop.run_in_executor(None, enrich_all_unenriched, conn, client)
+            logger.info("Manual refresh enrichment: {} ok, {} failed", ok, fail)
+
+    asyncio.create_task(_enrich())
     return {slug: list(counts) for slug, counts in results.items()}
+
+
+@app.get("/api/status")
+def api_status(conn: ConnDep) -> dict:
+    total = conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
+    enriched = conn.execute(
+        "SELECT COUNT(*) FROM articles WHERE body_text != '' AND body_text IS NOT NULL"
+    ).fetchone()[0]
+    return {"total_articles": total, "enriched": enriched, "pending_enrichment": total - enriched}
