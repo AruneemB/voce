@@ -5,7 +5,7 @@ import ipaddress
 import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated, Literal, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
@@ -18,6 +18,7 @@ from starlette.responses import FileResponse, Response
 from voce.config import settings
 from voce.db import bootstrap_schema, get_connection
 from voce.feeds import refresh_all_feeds
+from voce.scheduler import build_scheduler
 from voce.tts import synthesize_article
 
 _synthesis_in_progress: set[str] = set()
@@ -72,6 +73,17 @@ class AudioStatusOut(BaseModel):
     pending: bool
 
 
+class StateUpdate(BaseModel):
+    status: Literal["unread", "queued", "listened"]
+
+
+class ReadingStateOut(BaseModel):
+    article_id: str
+    status: str
+    last_played_at: Optional[str]
+    updated_at: str
+
+
 class LocalhostOnlyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         # Primary: reject connections from non-loopback IPs (not spoofable via headers).
@@ -103,11 +115,23 @@ ConnDep = Annotated[sqlite3.Connection, Depends(get_conn)]
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import threading
     conn = get_connection()
     bootstrap_schema(conn)
     conn.close()
     logger.info("Voce schema bootstrapped")
+    scheduler = build_scheduler(get_connection)
+    scheduler.start()
+    def _refresh_once() -> None:
+        conn = get_connection()
+        try:
+            refresh_all_feeds(conn)
+        finally:
+            conn.close()
+
+    threading.Thread(target=_refresh_once, daemon=True).start()
     yield
+    scheduler.shutdown(wait=False)
 
 
 def create_app() -> FastAPI:
@@ -365,6 +389,66 @@ def stream_audio(article_id: str, conn: ConnDep) -> FileResponse:
         media_type="audio/mpeg",
         headers={"Content-Disposition": "inline"},
     )
+
+
+@app.post("/api/articles/{article_id}/state", response_model=ReadingStateOut)
+def set_article_state(article_id: str, body: StateUpdate, conn: ConnDep) -> ReadingStateOut:
+    if conn.execute("SELECT 1 FROM articles WHERE id=?", (article_id,)).fetchone() is None:
+        raise HTTPException(status_code=404, detail="Article not found")
+    conn.execute(
+        "INSERT INTO reading_state (article_id, status, last_played_at, updated_at) "
+        "VALUES (?, ?, "
+        "    CASE WHEN ?='listened' THEN strftime('%Y-%m-%dT%H:%M:%SZ','now') "
+        "         ELSE NULL END, "
+        "    strftime('%Y-%m-%dT%H:%M:%SZ','now')) "
+        "ON CONFLICT(article_id) DO UPDATE SET "
+        "    status=excluded.status, "
+        "    last_played_at = CASE "
+        "        WHEN excluded.status='listened' THEN strftime('%Y-%m-%dT%H:%M:%SZ','now') "
+        "        WHEN excluded.status='unread'   THEN NULL "
+        "        ELSE last_played_at "
+        "    END, "
+        "    updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')",
+        (article_id, body.status, body.status),
+    )
+    conn.commit()
+    row = conn.execute(
+        "SELECT article_id, status, last_played_at, updated_at "
+        "FROM reading_state WHERE article_id=?",
+        (article_id,),
+    ).fetchone()
+    return ReadingStateOut(
+        article_id=row["article_id"],
+        status=row["status"],
+        last_played_at=row["last_played_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+@app.get("/api/queue", response_model=list[ArticleSummaryOut])
+def get_queue(conn: ConnDep) -> list[ArticleSummaryOut]:
+    rows = conn.execute(
+        "SELECT a.id, a.section, a.title, a.author, a.published_at, a.url, "
+        "a.summary, a.quanta_audio_url, r.status "
+        "FROM articles a "
+        "JOIN reading_state r ON r.article_id = a.id "
+        "WHERE r.status = 'queued' "
+        "ORDER BY r.updated_at ASC"
+    ).fetchall()
+    return [
+        ArticleSummaryOut(
+            id=r["id"],
+            section=r["section"],
+            title=r["title"],
+            author=r["author"],
+            published_at=r["published_at"],
+            url=r["url"],
+            summary=r["summary"],
+            status=r["status"],
+            quanta_audio_url=r["quanta_audio_url"],
+        )
+        for r in rows
+    ]
 
 
 @app.post("/api/refresh")
