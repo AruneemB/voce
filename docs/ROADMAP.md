@@ -50,7 +50,7 @@ The ElevenLabs synthesis layer (`tts.py`, `cache.py`) implements the complete au
 - **`sweep_expired_cache()`** — deletes `audio_cache` rows and their MP3 files where `last_played_at` is older than the configured TTL; accepts an explicit `ttl_days` override or falls back to `settings.audio_cache_ttl_days`
 - **`get_cache_stats()`** — returns total file count, oldest, and newest `last_played_at` timestamps
 
-**208 tests pass across Phases 1–7** (48 new tests covering `chunk_text` boundary algorithm — including sentence, space, hard-split, `! `, `? `, last-boundary selection, and empty-chunk filtering — `synthesize_chunk` bytes-joining and error wrapping, `get_audio_duration` mutagen delegation, `synthesize_article` cache-hit, stale-file recovery, cost guard, and `TTSSynthesisError` propagation, and `sweep_expired_cache` / `get_cache_stats` across multi-entry batches, settings-default TTL, single-entry stats, and post-sweep state).
+**208 tests pass across Phases 1–7** (33 new tests covering `chunk_text` boundary algorithm — including sentence, space, hard-split, `! `, `? `, last-boundary selection, and empty-chunk filtering — `synthesize_chunk` bytes-joining and error wrapping, `get_audio_duration` mutagen delegation, `synthesize_article` cache-hit, stale-file recovery, cost guard, and `TTSSynthesisError` propagation, and `sweep_expired_cache` / `get_cache_stats` across multi-entry batches, settings-default TTL, single-entry stats, and post-sweep state).
 
 ---
 
