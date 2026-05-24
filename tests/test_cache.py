@@ -1,8 +1,10 @@
 import sqlite3
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
+from voce import config as cfg
 from voce.cache import get_cache_stats, sweep_expired_cache
 from voce.db import bootstrap_schema
 
@@ -109,6 +111,25 @@ def test_sweep_expires_same_day_older_timestamp(mem_conn, tmp_path):
 def test_sweep_raises_for_negative_ttl_days(mem_conn):
     with pytest.raises(ValueError, match="ttl_days must be non-negative"):
         sweep_expired_cache(mem_conn, ttl_days=-1)
+
+
+def test_sweep_deletes_all_expired_entries_in_batch(mem_conn, tmp_path):
+    for article_id in ["art1", "art2"]:
+        mp3 = tmp_path / f"{article_id}.mp3"
+        mp3.write_bytes(b"fake")
+        _insert_cache_row(mem_conn, article_id, str(mp3), "2000-01-01T00:00:00Z")
+    count = sweep_expired_cache(mem_conn, ttl_days=1)
+    assert count == 2
+    assert mem_conn.execute("SELECT COUNT(*) FROM audio_cache").fetchone()[0] == 0
+
+
+def test_sweep_uses_settings_ttl_when_ttl_days_is_none(mem_conn, tmp_path):
+    mp3 = tmp_path / "art1.mp3"
+    mp3.write_bytes(b"fake")
+    _insert_cache_row(mem_conn, "art1", str(mp3), "2000-01-01T00:00:00Z")
+    with patch.object(cfg.settings, "audio_cache_ttl_days", 1):
+        count = sweep_expired_cache(mem_conn)  # ttl_days=None → falls back to settings
+    assert count == 1
 
 
 # ── get_cache_stats tests ─────────────────────────────────────────────────────
