@@ -225,19 +225,22 @@ def get_cache_stats(conn: sqlite3.Connection) -> dict: ...
 
 ## `scheduler.py` — Background job scheduling
 
-**Owns:** Configuring and managing the APScheduler background scheduler.
+**Owns:** Configuring the APScheduler background scheduler with feed refresh and cache sweep jobs.
 
 ```python
-def start_scheduler() -> BackgroundScheduler: ...
-def stop_scheduler(scheduler: BackgroundScheduler) -> None: ...
+def _refresh_job(conn_factory: Callable[[], sqlite3.Connection]) -> None: ...
+def _sweep_job(conn_factory: Callable[[], sqlite3.Connection]) -> None: ...
+def build_scheduler(conn_factory: Callable[[], sqlite3.Connection]) -> BackgroundScheduler: ...
 ```
 
-`start_scheduler()` creates an `APScheduler` `BackgroundScheduler` with two jobs:
+`build_scheduler()` creates and configures a `BackgroundScheduler` with `timezone="UTC"` but does not start it — the caller is responsible for calling `.start()` and `.shutdown()`. It registers two jobs:
 
-- Feed refresh: every `settings.feed_refresh_minutes` minutes, starting immediately
-- Cache sweep: daily at 03:00 local time
+- **`feed_refresh`** — interval trigger, fires every `settings.feed_refresh_minutes` minutes; calls `_refresh_job(conn_factory)`, which opens a fresh connection, calls `refresh_all_feeds()`, logs the per-section counts, and closes the connection in a `finally` block.
+- **`cache_sweep`** — cron trigger, fires daily at 03:00 UTC; calls `_sweep_job(conn_factory)`, which opens a fresh connection, calls `sweep_expired_cache()`, logs the count of deleted files, and closes the connection.
 
-The scheduler is started as part of the FastAPI lifespan and shut down cleanly on server exit.
+Both private job functions catch and log any exception so that a failure in one job does not affect the other. Each job opens its own connection (via `conn_factory`) rather than sharing a connection across threads.
+
+`build_scheduler()` is called in the FastAPI `lifespan` context, which starts the scheduler on app startup and calls `scheduler.shutdown(wait=False)` on teardown.
 
 ---
 
@@ -255,17 +258,32 @@ class ArticleSummaryOut(BaseModel): ...
 class ArticleDetailOut(ArticleSummaryOut): ...
 class PaginatedArticles(BaseModel): ...
 class TopicOut(BaseModel): ...
-class AudioStatusOut(BaseModel): ...  # cached, url, duration_sec, pending
+class AudioStatusOut(BaseModel): ...    # cached, url, duration_sec, pending
+class StateUpdate(BaseModel): ...       # status: Literal["unread","queued","listened"]
+class ReadingStateOut(BaseModel): ...   # article_id, status, last_played_at, updated_at
 
 def create_app() -> FastAPI: ...
 app: FastAPI  # module-level instance
 ```
 
-`create_app()` wires up `LocalhostOnlyMiddleware`, mounts the `/static` file directory, ensures `settings.audio_cache_dir` exists, mounts the audio cache directory under `/audio`, and sets the lifespan context (which bootstraps the schema on startup).
+`create_app()` wires up `LocalhostOnlyMiddleware`, mounts the `/static` file directory, ensures `settings.audio_cache_dir` exists, mounts the audio cache directory under `/audio`, and sets the lifespan context.
+
+The `lifespan` context manager:
+1. Opens a connection, runs `bootstrap_schema()`, and closes it.
+2. Calls `build_scheduler(get_connection)` and starts the returned scheduler.
+3. Launches a daemon thread that calls `refresh_all_feeds(get_connection())` immediately on startup.
+4. On teardown (after `yield`), calls `scheduler.shutdown(wait=False)`.
 
 All routes are thin: validate inputs, run a parameterised query via the `ConnDep` dependency, return a Pydantic model. No business logic lives in routes.
 
 The `ConnDep` dependency (`Annotated[sqlite3.Connection, Depends(get_conn)]`) opens a connection at the start of each request and closes it in a `finally` block, regardless of whether the request succeeded.
+
+**State and queue routes:**
+
+| Route | What it does |
+|-------|-------------|
+| `POST /api/articles/{id}/state` | Validates the article exists (404 if not), then UPSERTs `reading_state` with transition rules for `last_played_at`. Returns `ReadingStateOut`. |
+| `GET /api/queue` | Queries articles joined to `reading_state WHERE status='queued'` ordered by `updated_at ASC`. Returns `list[ArticleSummaryOut]`. |
 
 **Audio routes:**
 
@@ -364,6 +382,7 @@ const VALID_STATUSES = new Set(['unread', 'queued', 'listened']);
 | `pollAudioStatus` | `(articleId, attempt) → void` | Retries every 2 seconds. Aborts immediately (without rendering) if `articleId !== currentArticleId`, preventing stale-poll results from overwriting the detail pane when the user has navigated to a different article. After 60 attempts (120 seconds), shows an error toast and restores the generate button. |
 | `showToast` | `(message, type) → void` | Creates a coloured `<div>` (red for `"error"`, green for `"success"`, blue for `"info"`) in `#toast-container`. Auto-removes after 4000 ms via `setTimeout`. |
 | `triggerRefresh` | `async () → void` | Posts to `/api/refresh`, shows a success or error toast, then reloads sections and articles. |
+| `setState` | `async (articleId, status) → void` | POSTs `{status}` to `/api/articles/{id}/state`. On success, updates `#current-state` text and calls `loadSections()` to refresh unread badge counts. On failure, shows an error toast. Listeners are attached via `addEventListener` on `[data-state-action]` buttons — no `onclick` attribute is used. |
 
 All article fields injected via `innerHTML` (`title`, `author`, `summary`, `body_text`, `display_name`) are passed through `escapeHtml()`. Status values used in CSS class names are validated against `VALID_STATUSES` before interpolation; any unrecognised status falls back to `"unread"`. The generate button never carries an `onclick` attribute; event listeners are always attached via `addEventListener` after the HTML is written, preventing any risk of script injection through article ID values.
 
