@@ -69,6 +69,33 @@ def test_clean_html_simple_paragraph():
     assert result == "Hello world."
 
 
+def test_clean_html_skips_node_with_none_attrs():
+    """Regression: lxml can emit Tag-like nodes whose attrs attribute is None
+    (e.g. CDATA sections, processing instructions).  The class-filter loop
+    must skip these nodes rather than crashing with AttributeError when it
+    calls tag.get('class') -> self.attrs.get()."""
+    from bs4 import BeautifulSoup
+    from unittest.mock import MagicMock
+
+    # Build a sentinel node that mimics the broken lxml behaviour
+    bad_node = MagicMock()
+    bad_node.attrs = None
+
+    original_find_all = BeautifulSoup.find_all
+
+    def patched_find_all(self, *args, **kwargs):
+        results = original_find_all(self, *args, **kwargs)
+        # Inject the bad node only at the class-filter call (find_all(True))
+        if args == (True,) and not kwargs:
+            return [bad_node] + list(results)
+        return results
+
+    with patch.object(BeautifulSoup, "find_all", patched_find_all):
+        result = clean_html_for_tts("<p>Content survives.</p>")
+
+    assert "Content survives." in result
+
+
 def test_clean_html_strips_script_tags():
     result = clean_html_for_tts("<p>Keep this</p><script>alert('x')</script>")
     assert "alert" not in result
