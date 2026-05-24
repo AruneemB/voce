@@ -52,13 +52,25 @@ The ElevenLabs synthesis layer (`tts.py`, `cache.py`) implements the complete au
 
 **208 tests pass across Phases 1–7** (33 new tests covering `chunk_text` boundary algorithm — including sentence, space, hard-split, `"! "`, `"? "`, last-boundary selection, and empty-chunk filtering — `synthesize_chunk` bytes-joining and error wrapping, `get_audio_duration` mutagen delegation, `synthesize_article` cache-hit, stale-file recovery, cost guard, and `TTSSynthesisError` propagation, and `sweep_expired_cache` / `get_cache_stats` across multi-entry batches, settings-default TTL, single-entry stats, and post-sweep state).
 
+### Phase 8 — Audio player
+
+Three new API routes wire the synthesis layer into the browser UI:
+
+- **`POST /api/articles/{id}/audio`** — dispatches `synthesize_article()` to a background thread (fire-and-forget) and returns `202` immediately. Returns `{"status": "ready", "url": "…"}` if audio is already cached.
+- **`GET /api/articles/{id}/audio/status`** — returns `{cached, url, duration_sec, pending}` for polling without triggering synthesis.
+- **`GET /api/articles/{id}/audio/stream`** — serves the cached MP3 via `FileResponse` and marks the article as `"listened"`.
+
+In-progress synthesis is tracked in the module-level `_synthesis_in_progress` set (reset on server restart). Cached files are also accessible via a `StaticFiles` mount at `/audio`.
+
+The article detail view now fetches `/audio/status` immediately after rendering. `renderAudioSection()` dispatches to an `<audio controls>` player (if locally cached), a Quanta-narration player with a "Quanta's own narration" label (if the RSS entry included an enclosure URL), or a "Listen with Voce" button. `pollAudioStatus()` retries every 2 seconds for up to 120 seconds and shows a timeout toast if synthesis does not complete.
+
+A schema migration helper `_add_column_if_missing()` in `db.py` ensures the `articles.quanta_audio_url` column is present in pre-existing databases that were created before it was added to the DDL.
+
+**214 tests pass across Phases 1–8** (6 new tests in `test_api_audio.py` covering audio status for uncached and cached articles, stream 404 behaviour, synthesis trigger with mocked `synthesize_article`, 404 for missing articles, and "ready" response when audio is already cached).
+
 ---
 
 ## What is coming
-
-### Phase 8 — Audio player
-
-Wiring the synthesis layer into the browser UI. The synthesis back-end (`tts.py`) is fully implemented — Phase 8 exposes it through three new API routes (`POST /api/articles/{id}/audio`, `GET /api/articles/{id}/audio/status`, `GET /api/articles/{id}/audio/stream`) and adds an in-page audio player to the article detail view. Articles with Quanta's own narration URL surface that audio first, with local synthesis as a fallback.
 
 ### Phase 9 — Reading state and scheduler
 
