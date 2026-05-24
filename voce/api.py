@@ -5,7 +5,7 @@ import ipaddress
 import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated, Literal, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
@@ -70,6 +70,17 @@ class AudioStatusOut(BaseModel):
     url: Optional[str]
     duration_sec: Optional[int]
     pending: bool
+
+
+class StateUpdate(BaseModel):
+    status: Literal["unread", "queued", "listened"]
+
+
+class ReadingStateOut(BaseModel):
+    article_id: str
+    status: str
+    last_played_at: Optional[str]
+    updated_at: str
 
 
 class LocalhostOnlyMiddleware(BaseHTTPMiddleware):
@@ -364,6 +375,37 @@ def stream_audio(article_id: str, conn: ConnDep) -> FileResponse:
         row["file_path"],
         media_type="audio/mpeg",
         headers={"Content-Disposition": "inline"},
+    )
+
+
+@app.post("/api/articles/{article_id}/state", response_model=ReadingStateOut)
+def set_article_state(article_id: str, body: StateUpdate, conn: ConnDep) -> ReadingStateOut:
+    if conn.execute("SELECT 1 FROM articles WHERE id=?", (article_id,)).fetchone() is None:
+        raise HTTPException(status_code=404, detail="Article not found")
+    conn.execute(
+        "INSERT INTO reading_state (article_id, status, updated_at) "
+        "VALUES (?, ?, datetime('now')) "
+        "ON CONFLICT(article_id) DO UPDATE SET "
+        "    status=excluded.status, "
+        "    last_played_at = CASE "
+        "        WHEN excluded.status='listened' THEN datetime('now') "
+        "        WHEN excluded.status='unread'   THEN NULL "
+        "        ELSE last_played_at "
+        "    END, "
+        "    updated_at=datetime('now')",
+        (article_id, body.status),
+    )
+    conn.commit()
+    row = conn.execute(
+        "SELECT article_id, status, last_played_at, updated_at "
+        "FROM reading_state WHERE article_id=?",
+        (article_id,),
+    ).fetchone()
+    return ReadingStateOut(
+        article_id=row["article_id"],
+        status=row["status"],
+        last_played_at=row["last_played_at"],
+        updated_at=row["updated_at"],
     )
 
 
