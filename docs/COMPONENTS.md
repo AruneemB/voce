@@ -278,12 +278,13 @@ All routes are thin: validate inputs, run a parameterised query via the `ConnDep
 
 The `ConnDep` dependency (`Annotated[sqlite3.Connection, Depends(get_conn)]`) opens a connection at the start of each request and closes it in a `finally` block, regardless of whether the request succeeded.
 
-**State and queue routes:**
+**State, queue, and search routes:**
 
 | Route | What it does |
 |-------|-------------|
 | `POST /api/articles/{id}/state` | Validates the article exists (404 if not), then UPSERTs `reading_state` with transition rules for `last_played_at`. Returns `ReadingStateOut`. |
 | `GET /api/queue` | Queries articles joined to `reading_state WHERE status='queued'` ordered by `updated_at ASC`. Returns `list[ArticleSummaryOut]`. |
+| `GET /api/search` | Attempts an FTS5 `MATCH` query against the `fts_articles` virtual table; catches `sqlite3.OperationalError` and falls back to a parameterised `LIKE` query on `title` and `body_text`. Returns `list[ArticleSummaryOut]`. |
 
 **Audio routes:**
 
@@ -307,7 +308,22 @@ All three audio routes perform a file-existence check after reading from `audio_
 def main() -> None: ...
 ```
 
-Invoked via `python -m voce` or the `voce` console script defined in `pyproject.toml`. Accepts `--host`, `--port`, and `--log-level` flags (with additional flags planned for later phases: `--refresh-now`, `--sweep-cache`, `--no-browser`, `--verbose`). Starts uvicorn pointing at `voce.api:app`.
+Invoked via `python -m voce` or the `voce` console script defined in `pyproject.toml`.
+
+**Flags:**
+
+| Flag | Type | Description |
+|------|------|-------------|
+| `--host` | string | Bind address (default: `settings.host`) |
+| `--port` | integer | Port number (default: `settings.port`) |
+| `--log-level` | string | Uvicorn/loguru log level (default: `settings.log_level`) |
+| `--refresh-now` | boolean | Fetch all feeds, print per-section counts, and exit 0 — does not start uvicorn |
+| `--sweep-cache` | boolean | Delete expired audio cache entries, print count, and exit 0 — does not start uvicorn |
+| `--no-browser` | boolean | Do not open a browser window after starting the server |
+
+**Log routing:** After early-exit flags are handled, `main()` removes the default loguru handler, adds a stderr sink (level from `--log-level`, concise timestamp/level/module format), and adds a rotating file sink writing to `data/voce.log` (rotation at 10 MB, retention for 7 days, level `DEBUG`). This runs before uvicorn starts so all startup events are captured.
+
+**Early-exit flow:** `--refresh-now` and `--sweep-cache` open a connection via `get_connection()`, call the relevant function from `voce.feeds` or `voce.cache`, close the connection in the success path, and call `raise SystemExit(0)`. They do not configure loguru or launch uvicorn.
 
 ---
 
@@ -332,13 +348,17 @@ The application shell. Declares the three-column viewport-filling layout, loads 
 | `#article-list` | `<div>` | Article card container, populated by `loadArticles()` |
 | `#load-more-sentinel` | `<div>` | `IntersectionObserver` target for infinite scroll |
 | `#article-detail` | `<article>` | Article detail view, populated by `loadArticleDetail()` |
-| `#audio-player-section` | `<div>` | Reserved slot for the Phase 8 audio player |
+| `#audio-player-section` | `<div>` | Reserved slot for the audio player |
 | `#toast-container` | `<div>` | Fixed-position notification stack |
 | `#search-input` | `<input type="search">` | Debounced full-text search |
+| `#theme-toggle` | `<button>` | Dark mode toggle (`🌙`); calls `toggleTheme()` via `onclick` |
 
-CDN script tags use the exact URLs and integrity attributes required by the spec:
+**Dark mode configuration:** A `<script>tailwind.config = { darkMode: 'class' }</script>` tag is placed immediately before the Tailwind CDN tag. This instructs Tailwind to activate dark-mode variants when the `dark` class is present on `<html>` rather than responding to `prefers-color-scheme`.
+
+CDN script tags:
 
 ```html
+<script>tailwind.config = { darkMode: 'class' }</script>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://unpkg.com/htmx.org@1.9.10"
         integrity="sha384-D1Kt99CQMDuVetoL1lrYwg5t+9QdHe7NLX/SoJYkXDFfX37iInKRy5ViYgSibmK"
@@ -370,31 +390,34 @@ const VALID_STATUSES = new Set(['unread', 'queued', 'listened']);
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
+| `safeFetch` | `async (url, options) → any` | Wraps `fetch()`: throws `Error("HTTP {status}")` on non-OK responses, shows an error toast via `showToast`, then re-throws. Returns the parsed JSON body on success. Every API call in the file goes through this wrapper. |
 | `escapeHtml` | `(value) → string` | Encodes `&`, `<`, `>`, `"`, `'` as HTML entities. Applied to every API-sourced string before injection into `innerHTML`. |
-| `loadSections` | `async () → void` | Fetches `/api/sections`, renders `<li><button data-section="{slug}">` items with unread badge counts into `#section-list`. Section click sets `currentSection` and calls `loadArticles(true)`. |
-| `loadArticles` | `async (reset = true) → void` | Guarded by `isLoadingArticles` (drops concurrent calls) and `hasMoreArticles` (stops requesting once the last page is received). Fetches `/api/articles` with current filter params. `reset = true` clears `#article-list`, resets `currentOffset`, and restores `hasMoreArticles`. Appends article cards and advances `currentOffset` by the actual item count returned. |
-| `loadArticleDetail` | `async (articleId) → void` | Sets `currentArticleId = articleId` immediately (before any awaits) so stale audio polls can detect navigation. Fetches `/api/articles/{id}`, renders the detail pane, then fetches audio status in a nested try/catch that is isolated from the article fetch. If the status fetch fails for any reason, `renderAudioSection` is called with `{ cached: false, pending: false }` so the generate button is always shown. Calls `history.pushState`. |
+| `toggleTheme` | `() → void` | Toggles the `dark` class on `document.documentElement` and persists the preference to `localStorage` under the key `theme`. |
+| `loadSections` | `async () → void` | Fetches `/api/sections` via `safeFetch`, renders `<li><button data-section="{slug}">` items with unread badge counts into `#section-list`. Section click sets `currentSection` and calls `loadArticles(true)`. |
+| `loadArticles` | `async (reset = true) → void` | Guarded by `isLoadingArticles` (drops concurrent calls) and `hasMoreArticles` (stops requesting once the last page is received). Fetches `/api/articles` via `safeFetch` with current filter params. `reset = true` clears `#article-list`, resets `currentOffset`, and restores `hasMoreArticles`. Appends article cards and advances `currentOffset` by the actual item count returned. |
+| `loadArticleDetail` | `async (articleId) → void` | Sets `currentArticleId = articleId` immediately (before any awaits) so stale audio polls can detect navigation. Fetches `/api/articles/{id}` via `safeFetch`, renders the detail pane, then fetches audio status in a nested try/catch that is isolated from the article fetch. If the status fetch fails for any reason, `renderAudioSection` is called with `{ cached: false, pending: false }` so the generate button is always shown. Calls `history.pushState`. |
 | `renderAudioSection` | `(articleId, statusData, article) → void` | Dispatches to `buildAudioPlayer` (if cached), a Quanta-narration player with label (if `article.quanta_audio_url` is set), or `buildGenerateButton`. After inserting the generate button via `innerHTML`, attaches the `click` listener via `addEventListener` — no `onclick` attribute is used. |
 | `buildAudioPlayer` | `(src, durationSec) → string` | Returns `<audio controls src="…">` HTML with an optional `"M:SS"` duration label. All values are passed through `escapeHtml`. |
 | `buildGenerateButton` | `(pending) → string` | Returns an animated spinner paragraph when `pending` is true, or a `<button class="btn-generate">Listen with Voce</button>` otherwise. The button carries no `onclick` attribute; callers attach the listener via `addEventListener` after inserting the HTML. |
 | `formatDuration` | `(seconds) → string` | Converts a duration in seconds to `"M:SS"` display format. |
-| `requestAudio` | `async (articleId) → void` | Posts to `/api/articles/{id}/audio`. If the response is `"ready"`, re-fetches status and calls `renderAudioSection`. If `"pending"`, calls `pollAudioStatus(articleId, 0)`. On error, restores the generate button via `innerHTML` + `addEventListener`. |
+| `requestAudio` | `async (articleId) → void` | Posts to `/api/articles/{id}/audio` via `safeFetch`. If the response is `"ready"`, re-fetches status and calls `renderAudioSection`. If `"pending"`, calls `pollAudioStatus(articleId, 0)`. On error, restores the generate button via `innerHTML` + `addEventListener`. |
 | `pollAudioStatus` | `(articleId, attempt) → void` | Retries every 2 seconds. Aborts immediately (without rendering) if `articleId !== currentArticleId`, preventing stale-poll results from overwriting the detail pane when the user has navigated to a different article. After 60 attempts (120 seconds), shows an error toast and restores the generate button. |
 | `showToast` | `(message, type) → void` | Creates a coloured `<div>` (red for `"error"`, green for `"success"`, blue for `"info"`) in `#toast-container`. Auto-removes after 4000 ms via `setTimeout`. |
-| `triggerRefresh` | `async () → void` | Posts to `/api/refresh`, shows a success or error toast, then reloads sections and articles. |
-| `setState` | `async (articleId, status) → void` | POSTs `{status}` to `/api/articles/{id}/state`. After the response resolves, checks `articleId === currentArticleId` before updating the DOM — if the user navigated to a different article while the request was in flight, the response is silently discarded. On success, updates `#current-state` text and calls `loadSections()` to refresh unread badge counts. On failure, shows an error toast. Listeners are attached via `addEventListener` on `[data-state-action]` buttons — no `onclick` attribute is used. |
+| `triggerRefresh` | `async () → void` | Shows a "Refreshing feeds…" info toast immediately, then POSTs to `/api/refresh` via `safeFetch`. On success, computes the total new-article count from the response and shows a "Refresh complete. N new articles." toast, then reloads sections and articles. Errors are silently swallowed (toast already shown by `safeFetch`). |
+| `setState` | `async (articleId, status) → void` | POSTs `{status}` to `/api/articles/{id}/state` via `safeFetch`. After the response resolves, checks `articleId === currentArticleId` before updating the DOM — if the user navigated to a different article while the request was in flight, the response is silently discarded. On success, updates `#current-state` text and calls `loadSections()` to refresh unread badge counts. Listeners are attached via `addEventListener` on `[data-state-action]` buttons — no `onclick` attribute is used. |
 
 All article fields injected via `innerHTML` (`title`, `author`, `summary`, `body_text`, `display_name`) are passed through `escapeHtml()`. Status values used in CSS class names are validated against `VALID_STATUSES` before interpolation; any unrecognised status falls back to `"unread"`. The generate button never carries an `onclick` attribute; event listeners are always attached via `addEventListener` after the HTML is written, preventing any risk of script injection through article ID values.
 
 The `DOMContentLoaded` handler wires together:
 
-1. `loadSections()` — initial section list
-2. `loadArticles(true)` — initial article list
-3. `IntersectionObserver` on `#load-more-sentinel` → `loadArticles(false)` when sentinel enters viewport (guard prevents duplicate loads)
-4. `#state-filters` click delegation → update `currentStatus`, reload articles
-5. `#topic-filter` change event → update `currentTopic` (empty string coerced to `null` for "All topics"), reset offset, reload articles
-6. `#search-input` input event → 300 ms debounce → fetch `/api/search?q=` (falls back to `/api/articles?q=` on 404) → render results
-7. `location.hash` check → if matches `#article/{id}`, call `loadArticleDetail` immediately
+1. Dark mode restoration — reads `localStorage.getItem('theme')` and adds `dark` to `<html>` if set to `'dark'`
+2. `loadSections()` — initial section list
+3. `loadArticles(true)` — initial article list
+4. `IntersectionObserver` on `#load-more-sentinel` → `loadArticles(false)` when sentinel enters viewport (guard prevents duplicate loads)
+5. `#state-filters` click delegation → update `currentStatus`, reload articles
+6. `#topic-filter` change event → update `currentTopic` (empty string coerced to `null` for "All topics"), reset offset, reload articles
+7. `#search-input` input event → 300 ms debounce → `safeFetch('/api/search?q=...')` → render results as article cards
+8. `location.hash` check → if matches `#article/{id}`, call `loadArticleDetail` immediately
 
 ---
 
