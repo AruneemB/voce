@@ -156,22 +156,44 @@ The audio synthesis trigger (`POST /api/articles/{id}/audio`) dispatches `synthe
 
 Cached MP3 files are served from `settings.audio_cache_dir` via two routes: the `GET /audio/stream` endpoint (which also updates `last_played_at` and marks the article as listened), and a `StaticFiles` mount at `/audio` that exposes the directory directly for browsers that request byte ranges for seeking.
 
+### API layer — full-text search
+
+`GET /api/search?q=<query>` provides dedicated full-text search. The route attempts an FTS5 `MATCH` query via the `fts_articles` virtual table (which is maintained by triggers on `articles`). If FTS5 is unavailable (`sqlite3.OperationalError`), it falls back to a `LIKE`-based search on `title` and `body_text`. Results are ranked by FTS5 relevance in the primary path. The `LIKE` fallback builds its pattern string (`%q%`) in Python and passes it as a parameterised binding — `q` is never interpolated into the SQL string directly.
+
+### CLI layer — `__main__.py`
+
+Three early-exit flags bypass uvicorn entirely:
+
+- **`--refresh-now`** — opens a connection, calls `refresh_all_feeds()`, prints the per-section `(inserted, skipped)` counts, and exits with code 0. Useful for seeding the database on a new machine.
+- **`--sweep-cache`** — opens a connection, calls `sweep_expired_cache()`, prints the count of deleted files, and exits with code 0. Useful for manual cache housekeeping.
+- **`--no-browser`** — suppresses the `webbrowser.open()` call after server startup. Useful in headless or SSH environments.
+
+On a normal startup, two loguru sinks are installed before uvicorn launches:
+- **stderr** — level from `--log-level`, concise `HH:mm:ss LEVEL module: message` format
+- **`data/voce.log`** — level `DEBUG`, rotated at 10 MB, retained for 7 days
+
+This ensures all startup events and debug output are captured to disk regardless of the terminal log level.
+
 ### Frontend — `voce/static/`
 
 A single-page application built with vanilla JavaScript, htmx, and Tailwind CSS (both loaded from CDN — no build step). The layout has three columns filling the full viewport height:
 
-- **Header** (`<header>`) — "Voce" wordmark, tagline "a reading companion for Quanta Magazine", a debounced search input (`#search-input`), and a Refresh button that posts to `POST /api/refresh`
+- **Header** (`<header>`) — "Voce" wordmark, tagline "a reading companion for Quanta Magazine", a debounced search input (`#search-input`), a Refresh button that posts to `POST /api/refresh`, and a `🌙` dark mode toggle (`#theme-toggle`)
 - **Left sidebar** (`#sidebar`) — section list (`#section-list`) populated from `/api/sections`; status filter buttons (`#state-filters`: All, Unread, Queued, Listened) that filter the article list; topic dropdown (`#topic-filter`)
 - **Article list** — scrollable centre panel (`#article-list`) with article cards, each showing title, author, date, a 200-character summary, and a colour-coded status badge. An `IntersectionObserver` watches `#load-more-sentinel` at the bottom and triggers the next page load automatically.
-- **Article detail** (`#article-detail`) — full article view with title, byline, an "Open in Quanta ↗" link to the original, body text rendered as prose paragraphs, and a reserved `#audio-player-section` element for Phase 8.
+- **Article detail** (`#article-detail`) — full article view with title, byline, an "Open in Quanta ↗" link to the original, body text rendered as prose paragraphs, and the `#audio-player-section` audio player slot.
+
+**Dark mode** — Tailwind is configured with `darkMode: 'class'` via an inline config script placed before the CDN tag. The `toggleTheme()` function adds or removes the `dark` class on `<html>` and writes the preference to `localStorage`. On `DOMContentLoaded`, the preference is read back and applied before the first render. This means the user's chosen theme persists across page reloads and browser sessions with no flicker.
+
+**`safeFetch` — unified error handling** — Every `fetch()` call is routed through `async function safeFetch(url, options)`. It throws `Error("HTTP {status}")` on non-OK responses, calls `showToast("Request failed: …", 'error')`, and re-throws. Callers either await and let the error propagate (for user-visible actions) or catch it silently (for background polling and optional status checks). This eliminates per-call `if (!resp.ok)` boilerplate and ensures all network errors reach the user as visible toast notifications.
 
 Navigation uses `history.pushState` so the URL reflects the selected article (`#article/{id}`). On page load, `location.hash` is checked to resolve deep links. Toast notifications (errors, success confirmations) are appended to `#toast-container` and auto-dismissed after four seconds.
 
 **XSS protection** — Every API-sourced string injected into `innerHTML` is passed through `escapeHtml()`, which encodes `&`, `<`, `>`, `"`, and `'` as HTML entities. Reading status strings used in CSS class names are validated against a `VALID_STATUSES` whitelist (`"unread"`, `"queued"`, `"listened"`) before interpolation; any unrecognised value falls back to `"unread"` rather than being used as-is. This ensures that malicious content in article titles, author names, or summaries cannot execute as HTML or JavaScript.
 
-When an article is opened, `loadArticleDetail()` sets `currentArticleId` then fetches `/api/articles/{id}/audio/status` in a nested try/catch isolated from the article fetch. If the status request fails for any reason, `renderAudioSection()` is called with a default `{ cached: false, pending: false }` payload so the generate button always appears. Based on the response, `renderAudioSection()` shows an `<audio controls>` player (if audio is cached), a Quanta-narration player with a label (if `quanta_audio_url` is set), or a "Listen with Voce" button. The button carries no `onclick` attribute; a `click` listener is attached via `addEventListener` after the HTML is written. Clicking the button calls `requestAudio()`, which posts to `/api/articles/{id}/audio` and calls `pollAudioStatus()` if the response is `"pending"`. `pollAudioStatus()` checks `articleId === currentArticleId` at the start of each tick and aborts silently if the user has navigated away. Polling runs every 2 seconds for up to 120 seconds; on completion, `renderAudioSection()` swaps in the audio player.
+When an article is opened, `loadArticleDetail()` sets `currentArticleId` then fetches `/api/articles/{id}/audio/status` via `safeFetch` in a nested try/catch isolated from the article fetch. If the status request fails for any reason, `renderAudioSection()` is called with a default `{ cached: false, pending: false }` payload so the generate button always appears. Based on the response, `renderAudioSection()` shows an `<audio controls>` player (if audio is cached), a Quanta-narration player with a label (if `quanta_audio_url` is set), or a "Listen with Voce" button. The button carries no `onclick` attribute; a `click` listener is attached via `addEventListener` after the HTML is written. Clicking the button calls `requestAudio()`, which posts to `/api/articles/{id}/audio` via `safeFetch` and calls `pollAudioStatus()` if the response is `"pending"`. `pollAudioStatus()` checks `articleId === currentArticleId` at the start of each tick and aborts silently if the user has navigated away. Polling runs every 2 seconds for up to 120 seconds; on completion, `renderAudioSection()` swaps in the audio player.
 
-The article detail view also renders three state toggle buttons — Queue, Mark Listened, and Mark Unread — via `data-state-action` attributes. Event listeners are attached with `addEventListener` after the HTML is written (no `onclick` attributes). Each button calls `setState(articleId, status)`, which POSTs to `POST /api/articles/{id}/state`. After the response resolves, `setState` checks `articleId === currentArticleId` before touching the DOM — if the user navigated away while the request was in flight, the response is silently discarded (matching the same stale-navigation guard used by `pollAudioStatus`). On success, `setState` updates the `#current-state` label with the new status and calls `loadSections()` to refresh the unread badge counts in the sidebar. The `articleId` value comes from the closure, never from HTML interpolation, so there is no XSS risk regardless of article content.
+The article detail view also renders three state toggle buttons — Queue, Mark Listened, and Mark Unread — via `data-state-action` attributes. Event listeners are attached with `addEventListener` after the HTML is written (no `onclick` attributes). Each button calls `setState(articleId, status)`, which POSTs via `safeFetch` to `POST /api/articles/{id}/state`. After the response resolves, `setState` checks `articleId === currentArticleId` before touching the DOM — if the user navigated away while the request was in flight, the response is silently discarded (matching the same stale-navigation guard used by `pollAudioStatus`). On success, `setState` updates the `#current-state` label with the new status and calls `loadSections()` to refresh the unread badge counts in the sidebar.
 
 ---
 
