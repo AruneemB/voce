@@ -54,6 +54,22 @@ def test_chunk_text_raises_for_non_positive_limit():
         chunk_text("some text", limit=0)
 
 
+def test_chunk_text_splits_at_exclamation_boundary():
+    text = "A" * 100 + "! " + "B" * 3000
+    result = chunk_text(text)
+    assert result[0].endswith("! ")
+    for chunk in result:
+        assert len(chunk) <= ELEVENLABS_CHAR_LIMIT
+
+
+def test_chunk_text_splits_at_question_boundary():
+    text = "A" * 100 + "? " + "B" * 3000
+    result = chunk_text(text)
+    assert result[0].endswith("? ")
+    for chunk in result:
+        assert len(chunk) <= ELEVENLABS_CHAR_LIMIT
+
+
 # ── synthesize_article tests ──────────────────────────────────────────────────
 
 @pytest.fixture
