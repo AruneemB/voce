@@ -71,6 +71,20 @@ END;
 """
 
 
+def _add_column_if_missing(
+    conn: sqlite3.Connection, table: str, column: str, col_type: str
+) -> None:
+    """Add *column* to *table* only if it does not already exist.
+
+    SQLite does not support ``ALTER TABLE … ADD COLUMN IF NOT EXISTS``, so we
+    inspect ``PRAGMA table_info`` and conditionally issue the ``ALTER TABLE``.
+    Idempotent; safe to call on every bootstrap.
+    """
+    cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+
+
 def get_connection() -> sqlite3.Connection:
     """Open and configure a new SQLite connection. Caller is responsible for closing it."""
     settings.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -84,4 +98,5 @@ def get_connection() -> sqlite3.Connection:
 def bootstrap_schema(conn: sqlite3.Connection) -> None:
     """Create all tables, indexes, and triggers if they do not already exist."""
     conn.executescript(_DDL)
+    _add_column_if_missing(conn, "articles", "quanta_audio_url", "TEXT")
     conn.commit()
