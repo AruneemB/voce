@@ -122,9 +122,14 @@ async def lifespan(app: FastAPI):
     logger.info("Voce schema bootstrapped")
     scheduler = build_scheduler(get_connection)
     scheduler.start()
-    threading.Thread(
-        target=lambda: refresh_all_feeds(get_connection()), daemon=True
-    ).start()
+    def _refresh_once() -> None:
+        conn = get_connection()
+        try:
+            refresh_all_feeds(conn)
+        finally:
+            conn.close()
+
+    threading.Thread(target=_refresh_once, daemon=True).start()
     yield
     scheduler.shutdown(wait=False)
 
@@ -391,17 +396,20 @@ def set_article_state(article_id: str, body: StateUpdate, conn: ConnDep) -> Read
     if conn.execute("SELECT 1 FROM articles WHERE id=?", (article_id,)).fetchone() is None:
         raise HTTPException(status_code=404, detail="Article not found")
     conn.execute(
-        "INSERT INTO reading_state (article_id, status, updated_at) "
-        "VALUES (?, ?, datetime('now')) "
+        "INSERT INTO reading_state (article_id, status, last_played_at, updated_at) "
+        "VALUES (?, ?, "
+        "    CASE WHEN ?='listened' THEN strftime('%Y-%m-%dT%H:%M:%SZ','now') "
+        "         ELSE NULL END, "
+        "    strftime('%Y-%m-%dT%H:%M:%SZ','now')) "
         "ON CONFLICT(article_id) DO UPDATE SET "
         "    status=excluded.status, "
         "    last_played_at = CASE "
-        "        WHEN excluded.status='listened' THEN datetime('now') "
+        "        WHEN excluded.status='listened' THEN strftime('%Y-%m-%dT%H:%M:%SZ','now') "
         "        WHEN excluded.status='unread'   THEN NULL "
         "        ELSE last_played_at "
         "    END, "
-        "    updated_at=datetime('now')",
-        (article_id, body.status),
+        "    updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')",
+        (article_id, body.status, body.status),
     )
     conn.commit()
     row = conn.execute(
