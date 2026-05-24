@@ -321,9 +321,9 @@ Invoked via `python -m voce` or the `voce` console script defined in `pyproject.
 | `--sweep-cache` | boolean | Delete expired audio cache entries, print count, and exit 0 — does not start uvicorn |
 | `--no-browser` | boolean | Do not open a browser window after starting the server |
 
-**Log routing:** After early-exit flags are handled, `main()` removes the default loguru handler, adds a stderr sink (level from `--log-level`, concise timestamp/level/module format), and adds a rotating file sink writing to `data/voce.log` (rotation at 10 MB, retention for 7 days, level `DEBUG`). This runs before uvicorn starts so all startup events are captured.
+**Log routing:** After early-exit flags are handled, `main()` calls `Path("data").mkdir(parents=True, exist_ok=True)` to guarantee the log directory exists (loguru does not create missing parent directories for file sinks), then removes the default loguru handler, adds a stderr sink (level from `--log-level`, concise timestamp/level/module format), and adds a rotating file sink writing to `data/voce.log` (rotation at 10 MB, retention for 7 days, level `DEBUG`). This runs before uvicorn starts so all startup events are captured.
 
-**Early-exit flow:** `--refresh-now` and `--sweep-cache` open a connection via `get_connection()`, call the relevant function from `voce.feeds` or `voce.cache`, close the connection in the success path, and call `raise SystemExit(0)`. They do not configure loguru or launch uvicorn.
+**Early-exit flow:** `--refresh-now` and `--sweep-cache` open a connection via `get_connection()` and execute their operation inside a `try/finally` block so the connection is always closed even if the operation raises — `raise SystemExit(0)` is inside the `try` so the `finally` still runs before the process exits. They do not configure loguru or launch uvicorn.
 
 ---
 
@@ -390,7 +390,7 @@ const VALID_STATUSES = new Set(['unread', 'queued', 'listened']);
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `safeFetch` | `async (url, options) → any` | Wraps `fetch()`: throws `Error("HTTP {status}")` on non-OK responses, shows an error toast via `showToast`, then re-throws. Returns the parsed JSON body on success. Every API call in the file goes through this wrapper. |
+| `safeFetch` | `async (url, options) → any` | Wraps `fetch()`: throws `Error("HTTP {status}")` on non-OK responses, `await`s `resp.json()` inside the try block so JSON parse errors are also caught and toasted, shows an error toast via `showToast`, then re-throws. Returns the parsed JSON body on success. Every API call in the file goes through this wrapper. |
 | `escapeHtml` | `(value) → string` | Encodes `&`, `<`, `>`, `"`, `'` as HTML entities. Applied to every API-sourced string before injection into `innerHTML`. |
 | `toggleTheme` | `() → void` | Toggles the `dark` class on `document.documentElement` and persists the preference to `localStorage` under the key `theme`. |
 | `loadSections` | `async () → void` | Fetches `/api/sections` via `safeFetch`, renders `<li><button data-section="{slug}">` items with unread badge counts into `#section-list`. Section click sets `currentSection` and calls `loadArticles(true)`. |
@@ -416,7 +416,7 @@ The `DOMContentLoaded` handler wires together:
 4. `IntersectionObserver` on `#load-more-sentinel` → `loadArticles(false)` when sentinel enters viewport (guard prevents duplicate loads)
 5. `#state-filters` click delegation → update `currentStatus`, reload articles
 6. `#topic-filter` change event → update `currentTopic` (empty string coerced to `null` for "All topics"), reset offset, reload articles
-7. `#search-input` input event → 300 ms debounce → `safeFetch('/api/search?q=...')` → render results as article cards
+7. `#search-input` input event → 300 ms debounce → `safeFetch('/api/search?q=...')` → render results as article cards (each card has both `click` and `keydown` Enter/Space handlers for keyboard accessibility)
 8. `location.hash` check → if matches `#article/{id}`, call `loadArticleDetail` immediately
 
 ---

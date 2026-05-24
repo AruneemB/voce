@@ -158,17 +158,19 @@ Cached MP3 files are served from `settings.audio_cache_dir` via two routes: the 
 
 ### API layer — full-text search
 
-`GET /api/search?q=<query>` provides dedicated full-text search. The route attempts an FTS5 `MATCH` query via the `fts_articles` virtual table (which is maintained by triggers on `articles`). If FTS5 is unavailable (`sqlite3.OperationalError`), it falls back to a `LIKE`-based search on `title` and `body_text`. Results are ranked by FTS5 relevance in the primary path. The `LIKE` fallback builds its pattern string (`%q%`) in Python and passes it as a parameterised binding — `q` is never interpolated into the SQL string directly.
+`GET /api/search?q=<query>` provides dedicated full-text search. The route attempts an FTS5 `MATCH` query via the `fts_articles` virtual table (which is maintained by triggers on `articles`). If FTS5 is unavailable (`sqlite3.OperationalError`), it falls back to a `LIKE`-based search on `title` and `body_text`. Results are ranked by FTS5 relevance in the primary path; the LIKE fallback orders by `published_at DESC`. The `LIKE` fallback builds its pattern string (`%q%`) in Python and passes it as a parameterised binding — `q` is never interpolated into the SQL string directly.
+
+Both paths use `LEFT JOIN reading_state` with `COALESCE(status, 'unread')` so that articles not yet registered in `reading_state` are included in results with the correct default status, matching the behaviour of the main article-list endpoint.
 
 ### CLI layer — `__main__.py`
 
 Three early-exit flags bypass uvicorn entirely:
 
-- **`--refresh-now`** — opens a connection, calls `refresh_all_feeds()`, prints the per-section `(inserted, skipped)` counts, and exits with code 0. Useful for seeding the database on a new machine.
-- **`--sweep-cache`** — opens a connection, calls `sweep_expired_cache()`, prints the count of deleted files, and exits with code 0. Useful for manual cache housekeeping.
+- **`--refresh-now`** — opens a connection (wrapped in `try/finally`), calls `refresh_all_feeds()`, prints the per-section `(inserted, skipped)` counts, and exits with code 0. Useful for seeding the database on a new machine.
+- **`--sweep-cache`** — opens a connection (wrapped in `try/finally`), calls `sweep_expired_cache()`, prints the count of deleted files, and exits with code 0. Useful for manual cache housekeeping.
 - **`--no-browser`** — suppresses the `webbrowser.open()` call after server startup. Useful in headless or SSH environments.
 
-On a normal startup, two loguru sinks are installed before uvicorn launches:
+On a normal startup, two loguru sinks are installed before uvicorn launches. `data/` is created with `Path("data").mkdir(parents=True, exist_ok=True)` first, because loguru does not create missing parent directories for file sinks:
 - **stderr** — level from `--log-level`, concise `HH:mm:ss LEVEL module: message` format
 - **`data/voce.log`** — level `DEBUG`, rotated at 10 MB, retained for 7 days
 
@@ -185,7 +187,7 @@ A single-page application built with vanilla JavaScript, htmx, and Tailwind CSS 
 
 **Dark mode** — Tailwind is configured with `darkMode: 'class'` via an inline config script placed before the CDN tag. The `toggleTheme()` function adds or removes the `dark` class on `<html>` and writes the preference to `localStorage`. On `DOMContentLoaded`, the preference is read back and applied before the first render. This means the user's chosen theme persists across page reloads and browser sessions with no flicker.
 
-**`safeFetch` — unified error handling** — Every `fetch()` call is routed through `async function safeFetch(url, options)`. It throws `Error("HTTP {status}")` on non-OK responses, calls `showToast("Request failed: …", 'error')`, and re-throws. Callers either await and let the error propagate (for user-visible actions) or catch it silently (for background polling and optional status checks). This eliminates per-call `if (!resp.ok)` boilerplate and ensures all network errors reach the user as visible toast notifications.
+**`safeFetch` — unified error handling** — Every `fetch()` call is routed through `async function safeFetch(url, options)`. It throws `Error("HTTP {status}")` on non-OK responses, `await`s `resp.json()` inside the try block (so JSON parse failures are also caught and toasted), calls `showToast("Request failed: …", 'error')`, and re-throws. Callers either await and let the error propagate (for user-visible actions) or catch it silently (for background polling and optional status checks). This eliminates per-call `if (!resp.ok)` boilerplate and ensures all network errors — including malformed responses — reach the user as visible toast notifications.
 
 Navigation uses `history.pushState` so the URL reflects the selected article (`#article/{id}`). On page load, `location.hash` is checked to resolve deep links. Toast notifications (errors, success confirmations) are appended to `#toast-container` and auto-dismissed after four seconds.
 

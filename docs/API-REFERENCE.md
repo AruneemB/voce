@@ -232,8 +232,10 @@ Full-text search across article titles and body text. Uses SQLite's FTS5 virtual
 
 **Search strategy**
 
-1. **FTS5 (primary):** Executes a `MATCH` query against the `fts_articles` virtual table, joining back to `articles` and `reading_state`. Results are ordered by FTS5 relevance rank.
-2. **LIKE fallback:** If the FTS5 virtual table is unavailable (raises `sqlite3.OperationalError`), falls back to a `WHERE a.title LIKE ? OR a.body_text LIKE ?` query using `%q%` as the pattern. The pattern is built as a Python string and passed as a parameterised binding — `q` is never interpolated directly into the SQL string.
+1. **FTS5 (primary):** Executes a `MATCH` query against the `fts_articles` virtual table, joining back to `articles` and `reading_state` via `LEFT JOIN`. Results are ordered by FTS5 relevance rank. Articles without a `reading_state` row are included with status defaulting to `"unread"`.
+2. **LIKE fallback:** If the FTS5 virtual table is unavailable (raises `sqlite3.OperationalError`), falls back to a `WHERE a.title LIKE ? OR a.body_text LIKE ?` query using `%q%` as the pattern. The pattern is built as a Python string and passed as a parameterised binding — `q` is never interpolated directly into the SQL string. Results are ordered by `published_at DESC`. Articles without a `reading_state` row are included with status defaulting to `"unread"`.
+
+Both paths use `LEFT JOIN reading_state` so that articles ingested before their first `reading_state` row is created are never silently excluded from search results.
 
 **Response** — `200 OK`, array of article summary objects
 
