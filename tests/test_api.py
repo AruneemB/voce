@@ -81,3 +81,89 @@ def test_topics_returns_list(client):
 def test_localhost_middleware_blocks_external_host(client):
     resp = client.get("/api/sections", headers={"host": "evil.com"})
     assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# /api/status tests
+# ---------------------------------------------------------------------------
+
+
+def test_status_returns_200(client):
+    resp = client.get("/api/status")
+    assert resp.status_code == 200
+
+
+def test_status_response_shape(client):
+    data = client.get("/api/status").json()
+    assert "total_articles" in data
+    assert "enriched" in data
+    assert "pending_enrichment" in data
+
+
+def test_status_counts_enriched_article(client):
+    # The fixture inserts one article with body_text "Body text here." — enriched.
+    data = client.get("/api/status").json()
+    assert data["total_articles"] == 1
+    assert data["enriched"] == 1
+    assert data["pending_enrichment"] == 0
+
+
+def test_status_counts_unenriched_article():
+    """An article with empty body_text appears in pending_enrichment."""
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    bootstrap_schema(conn)
+    conn.execute(
+        "INSERT INTO articles (id, section, title, published_at, url, body_html, body_text) "
+        "VALUES (?,?,?,?,?,?,?)",
+        ("empty1", "physics", "No Body", "2024-01-01T00:00:00Z", "https://example.com/2", "", ""),
+    )
+    conn.commit()
+
+    previous = app.dependency_overrides.get(get_conn)
+    app.dependency_overrides[get_conn] = lambda: conn
+    try:
+        with TestClient(app, headers={"host": "127.0.0.1:8765"}) as c:
+            data = c.get("/api/status").json()
+    finally:
+        if previous is None:
+            app.dependency_overrides.pop(get_conn, None)
+        else:
+            app.dependency_overrides[get_conn] = previous
+        conn.close()
+
+    assert data["total_articles"] == 1
+    assert data["enriched"] == 0
+    assert data["pending_enrichment"] == 1
+
+
+def test_status_pending_plus_enriched_equals_total():
+    """pending_enrichment + enriched must always equal total_articles."""
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    bootstrap_schema(conn)
+    conn.execute(
+        "INSERT INTO articles (id, section, title, published_at, url, body_html, body_text) "
+        "VALUES ('e1','physics','T1','2024-01-01T00:00:00Z','https://example.com/e1','','Enriched.')"
+    )
+    conn.execute(
+        "INSERT INTO articles (id, section, title, published_at, url, body_html, body_text) "
+        "VALUES ('e2','mathematics','T2','2024-01-01T00:00:00Z','https://example.com/e2','','')"
+    )
+    conn.commit()
+
+    previous = app.dependency_overrides.get(get_conn)
+    app.dependency_overrides[get_conn] = lambda: conn
+    try:
+        with TestClient(app, headers={"host": "127.0.0.1:8765"}) as c:
+            data = c.get("/api/status").json()
+    finally:
+        if previous is None:
+            app.dependency_overrides.pop(get_conn, None)
+        else:
+            app.dependency_overrides[get_conn] = previous
+        conn.close()
+
+    assert data["enriched"] + data["pending_enrichment"] == data["total_articles"]

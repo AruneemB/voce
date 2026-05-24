@@ -159,6 +159,58 @@ def test_queue_ordering_by_updated_at(client_two_articles):
     assert ids[1] == "art1"
 
 
+def test_refresh_job_calls_enrichment_after_feed_refresh():
+    """_refresh_job must invoke enrich_all_unenriched after refresh_all_feeds.
+
+    This pins the enrichment wiring so that a future refactor of the
+    scheduler cannot accidentally drop the enrichment step without the
+    test suite catching it.
+    """
+    from unittest.mock import MagicMock, patch
+    from voce.scheduler import _refresh_job
+
+    mock_conn = MagicMock()
+    conn_factory = MagicMock(return_value=mock_conn)
+
+    with patch("voce.scheduler.refresh_all_feeds") as mock_refresh, \
+         patch("voce.scheduler.enrich_all_unenriched") as mock_enrich, \
+         patch("voce.scheduler.httpx.Client") as mock_client_cls:
+        mock_refresh.return_value = {}
+        mock_enrich.return_value = (0, 0)
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=ctx)
+        ctx.__exit__ = MagicMock(return_value=False)
+        mock_client_cls.return_value = ctx
+
+        _refresh_job(conn_factory)
+
+    mock_refresh.assert_called_once()
+    mock_enrich.assert_called_once()
+
+
+def test_refresh_job_enrichment_uses_certifi():
+    """_refresh_job must pass certifi.where() to its httpx.Client."""
+    import certifi
+    from unittest.mock import MagicMock, patch
+    from voce.scheduler import _refresh_job
+
+    conn_factory = MagicMock(return_value=MagicMock())
+
+    with patch("voce.scheduler.refresh_all_feeds", return_value={}), \
+         patch("voce.scheduler.enrich_all_unenriched", return_value=(0, 0)), \
+         patch("voce.scheduler.httpx.Client") as mock_client_cls:
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=ctx)
+        ctx.__exit__ = MagicMock(return_value=False)
+        mock_client_cls.return_value = ctx
+
+        _refresh_job(conn_factory)
+
+    kwargs = mock_client_cls.call_args.kwargs
+    assert kwargs.get("verify") == certifi.where()
+    assert kwargs.get("follow_redirects") is True
+
+
 def test_scheduler_feed_refresh_job_config():
     from voce.config import settings
     from voce.scheduler import build_scheduler
