@@ -18,6 +18,8 @@ from voce.config import settings
 from voce.db import bootstrap_schema, get_connection
 from voce.feeds import refresh_all_feeds
 
+_synthesis_in_progress: set[str] = set()
+
 SECTION_LABELS: dict[str, str] = {
     "physics": "Physics",
     "mathematics": "Mathematics",
@@ -59,6 +61,13 @@ class TopicOut(BaseModel):
     slug: str
     label: str
     article_count: int
+
+
+class AudioStatusOut(BaseModel):
+    cached: bool
+    url: Optional[str]
+    duration_sec: Optional[int]
+    pending: bool
 
 
 class LocalhostOnlyMiddleware(BaseHTTPMiddleware):
@@ -265,6 +274,51 @@ def list_topics(
         )
         for r in rows
     ]
+
+
+@app.get("/api/articles/{article_id}/audio/status", response_model=AudioStatusOut)
+def get_audio_status(article_id: str, conn: ConnDep) -> AudioStatusOut:
+    row = conn.execute(
+        "SELECT file_path, duration_sec FROM audio_cache WHERE article_id=?",
+        (article_id,),
+    ).fetchone()
+    if row:
+        return AudioStatusOut(
+            cached=True,
+            url=f"/api/articles/{article_id}/audio/stream",
+            duration_sec=row["duration_sec"],
+            pending=article_id in _synthesis_in_progress,
+        )
+    return AudioStatusOut(
+        cached=False,
+        url=None,
+        duration_sec=None,
+        pending=article_id in _synthesis_in_progress,
+    )
+
+
+@app.get("/api/articles/{article_id}/audio/stream")
+def stream_audio(article_id: str, conn: ConnDep) -> FileResponse:
+    row = conn.execute(
+        "SELECT file_path, duration_sec FROM audio_cache WHERE article_id=?",
+        (article_id,),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Audio not found")
+    conn.execute(
+        "UPDATE audio_cache SET last_played_at=datetime('now') WHERE article_id=?",
+        (article_id,),
+    )
+    conn.execute(
+        "UPDATE reading_state SET status='listened', last_played_at=datetime('now') WHERE article_id=?",
+        (article_id,),
+    )
+    conn.commit()
+    return FileResponse(
+        row["file_path"],
+        media_type="audio/mpeg",
+        headers={"Content-Disposition": "inline"},
+    )
 
 
 @app.post("/api/refresh")
