@@ -97,6 +97,8 @@ Polls four Quanta Magazine RSS feeds using `feedparser` and `httpx`. Each feed r
 
 Article IDs are derived by SHA-256 hashing the canonical article URL, taking the first 16 hex characters. This makes IDs stable and reproducible without requiring a sequence.
 
+The `httpx.Client` used for all feed requests is configured with `verify=certifi.where()` and `follow_redirects=True`. The certifi bundle (patched by `pip-system-certs` at runtime to use the OS-native trust store) ensures reliable TLS verification on all platforms including Windows. Redirect following is required because the Quanta Magazine feed URLs issue 301 redirects that httpx ≥ 0.20 does not follow by default.
+
 ### Enrichment — `article.py`
 
 Converts raw HTML article bodies into clean prose suitable for text-to-speech:
@@ -135,12 +137,12 @@ The `last_played_at` field in `audio_cache` is updated on every cache hit. `swee
 
 `build_scheduler(conn_factory)` creates an APScheduler `BackgroundScheduler` with two jobs:
 
-- **Feed refresh** (`feed_refresh`) — interval trigger, fires every `FEED_REFRESH_MINUTES` minutes (default 30). Calls `refresh_all_feeds()` using a fresh connection opened via `conn_factory`.
+- **Feed refresh** (`feed_refresh`) — interval trigger, fires every `FEED_REFRESH_MINUTES` minutes (default 30). Calls `refresh_all_feeds()` followed by `enrich_all_unenriched()` using a fresh connection opened via `conn_factory`. Both steps share a single `httpx.Client` (with certifi verification and redirect following) for the lifetime of the job.
 - **Cache sweep** (`cache_sweep`) — cron trigger, fires daily at 03:00 UTC. Calls `sweep_expired_cache()` using a fresh connection.
 
 Both jobs open and close their own connections independently to avoid cross-thread connection sharing. Errors are caught and logged so that one job failure does not affect the other.
 
-The scheduler is started in the FastAPI `lifespan` context manager immediately after schema bootstrap. An additional daemon thread triggers an immediate `refresh_all_feeds()` call on startup so that the database is populated without waiting for the first interval tick. The lifespan teardown calls `scheduler.shutdown(wait=False)`.
+The scheduler is started in the FastAPI `lifespan` context manager immediately after schema bootstrap. An additional daemon thread triggers an immediate `refresh_all_feeds()` call followed by `enrich_all_unenriched()` on startup so that the database is fully populated (with body text) before the first user request arrives, without waiting for the first interval tick. The lifespan teardown calls `scheduler.shutdown(wait=False)`.
 
 ### API layer — `api.py`
 
