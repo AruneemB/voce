@@ -409,6 +409,32 @@ def set_article_state(article_id: str, body: StateUpdate, conn: ConnDep) -> Read
     )
 
 
+@app.get("/api/queue", response_model=list[ArticleSummaryOut])
+def get_queue(conn: ConnDep) -> list[ArticleSummaryOut]:
+    rows = conn.execute(
+        "SELECT a.id, a.section, a.title, a.author, a.published_at, a.url, "
+        "a.summary, a.quanta_audio_url, r.status "
+        "FROM articles a "
+        "JOIN reading_state r ON r.article_id = a.id "
+        "WHERE r.status = 'queued' "
+        "ORDER BY r.updated_at ASC"
+    ).fetchall()
+    return [
+        ArticleSummaryOut(
+            id=r["id"],
+            section=r["section"],
+            title=r["title"],
+            author=r["author"],
+            published_at=r["published_at"],
+            url=r["url"],
+            summary=r["summary"],
+            status=r["status"],
+            quanta_audio_url=r["quanta_audio_url"],
+        )
+        for r in rows
+    ]
+
+
 @app.post("/api/refresh")
 async def refresh(conn: ConnDep) -> dict:
     loop = asyncio.get_running_loop()
