@@ -17,6 +17,7 @@ from starlette.responses import FileResponse, Response
 from voce.config import settings
 from voce.db import bootstrap_schema, get_connection
 from voce.feeds import refresh_all_feeds
+from voce.tts import synthesize_article
 
 _synthesis_in_progress: set[str] = set()
 
@@ -274,6 +275,36 @@ def list_topics(
         )
         for r in rows
     ]
+
+
+@app.post("/api/articles/{article_id}/audio", status_code=202)
+async def trigger_audio(article_id: str, conn: ConnDep) -> dict:
+    if article_id in _synthesis_in_progress:
+        return {"status": "pending"}
+    cache_row = conn.execute(
+        "SELECT 1 FROM audio_cache WHERE article_id=?", (article_id,)
+    ).fetchone()
+    if cache_row:
+        return {"status": "ready", "url": f"/api/articles/{article_id}/audio/stream"}
+    article_row = conn.execute(
+        "SELECT 1 FROM articles WHERE id=?", (article_id,)
+    ).fetchone()
+    if article_row is None:
+        raise HTTPException(status_code=404, detail="Article not found")
+    _synthesis_in_progress.add(article_id)
+
+    def _run() -> None:
+        try:
+            synth_conn = get_connection()
+            synthesize_article(article_id, synth_conn)
+            synth_conn.close()
+        except Exception:
+            logger.exception("Background synthesis failed for article {}", article_id)
+        finally:
+            _synthesis_in_progress.discard(article_id)
+
+    asyncio.get_event_loop().run_in_executor(None, _run)
+    return {"status": "pending"}
 
 
 @app.get("/api/articles/{article_id}/audio/status", response_model=AudioStatusOut)
