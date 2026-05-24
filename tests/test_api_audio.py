@@ -1,6 +1,7 @@
 """Tests for audio synthesis and playback API endpoints."""
 
 import sqlite3
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -57,4 +58,16 @@ def test_audio_status_uncached(client):
 
 def test_audio_stream_404_when_uncached(client):
     resp = client.get("/api/articles/art1/audio/stream")
+    assert resp.status_code == 404
+
+
+def test_audio_trigger_returns_202_pending(client):
+    with patch("voce.api.synthesize_article"):
+        resp = client.post("/api/articles/art1/audio")
+    assert resp.status_code == 202
+    assert resp.json()["status"] == "pending"
+
+
+def test_audio_trigger_404_for_missing_article(client):
+    resp = client.post("/api/articles/does-not-exist/audio")
     assert resp.status_code == 404
