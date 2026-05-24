@@ -12,6 +12,7 @@ Voce stores all state in a single SQLite file at `data/voce.db`. The schema is b
 - **Synchronous access.** The `sqlite3` standard library module is used directly. FastAPI routes delegate DB calls to a thread-pool executor via `asyncio.run_in_executor()`, so the event loop is never blocked.
 - **WAL mode.** `PRAGMA journal_mode=WAL` is set on every connection for better concurrent read performance.
 - **Foreign keys enforced.** `PRAGMA foreign_keys=ON` is set on every connection.
+- **Idempotent column migrations.** SQLite does not support `ALTER TABLE … ADD COLUMN IF NOT EXISTS`. New columns on existing tables are added via `_add_column_if_missing()` in `bootstrap_schema()`, which inspects `PRAGMA table_info` before issuing the `ALTER TABLE`. This is called after the main `executescript()` DDL block and is safe to run on every startup.
 
 ---
 
@@ -206,11 +207,11 @@ Enrichment runs
     → article.body_html and article.body_text populated
     → FTS5 index updated via articles_au trigger
 
-User requests audio
-    → audio_cache row checked
-    → if missing: synthesis pipeline runs, MP3 written to disk
-    → audio_cache row created
-    → last_played_at updated on every stream
+User clicks "Listen with Voce"
+    → POST /api/articles/{id}/audio dispatches synthesize_article() to thread pool
+    → GET /api/articles/{id}/audio/status polled every 2 s until cached=true
+    → audio_cache row created by synthesize_article()
+    → GET /api/articles/{id}/audio/stream updates last_played_at and marks 'listened'
 
 User updates reading status
     → reading_state.status updated
