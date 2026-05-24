@@ -113,6 +113,8 @@ def create_app() -> FastAPI:
     _app = FastAPI(title="Voce", lifespan=lifespan)
     _app.add_middleware(LocalhostOnlyMiddleware)
     _app.mount("/static", StaticFiles(directory="voce/static"), name="static")
+    settings.audio_cache_dir.mkdir(parents=True, exist_ok=True)
+    _app.mount("/audio", StaticFiles(directory=str(settings.audio_cache_dir)), name="audio")
     return _app
 
 
