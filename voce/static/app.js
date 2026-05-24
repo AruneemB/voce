@@ -107,6 +107,12 @@ async function loadArticleDetail(articleId) {
     `;
 
     history.pushState({ articleId }, '', `#article/${articleId}`);
+
+    const statusRes = await fetch(`/api/articles/${articleId}/audio/status`);
+    if (statusRes.ok) {
+      const statusData = await statusRes.json();
+      renderAudioSection(articleId, statusData, article);
+    }
   } catch (e) {
     showToast('Failed to load article', 'error');
   }
@@ -222,6 +228,86 @@ document.addEventListener('DOMContentLoaded', () => {
   const match = location.hash.match(/^#article\/(.+)$/);
   if (match) loadArticleDetail(match[1]);
 });
+
+// ── Audio Player ──────────────────────────────────────────────────────────────
+function renderAudioSection(articleId, statusData, article) {
+  const container = document.getElementById('audio-player-section');
+  if (!container) return;
+  if (statusData.cached) {
+    container.innerHTML = buildAudioPlayer(statusData.url, statusData.duration_sec);
+  } else if (article && article.quanta_audio_url) {
+    container.innerHTML =
+      buildAudioPlayer(article.quanta_audio_url, null) +
+      '<p class="text-sm text-gray-500 mt-1">Quanta\'s own narration</p>';
+  } else {
+    container.innerHTML = buildGenerateButton(articleId, statusData.pending);
+  }
+}
+
+function buildAudioPlayer(src, durationSec) {
+  const durationStr = durationSec ? formatDuration(durationSec) : '';
+  return (
+    `<audio controls src="${escapeHtml(src)}" class="w-full my-2"></audio>` +
+    (durationStr ? `<p class="text-xs text-gray-500">${escapeHtml(durationStr)}</p>` : '')
+  );
+}
+
+function buildGenerateButton(articleId, pending) {
+  if (pending) {
+    return '<p class="text-sm text-gray-500 animate-pulse">Generating audio…</p>';
+  }
+  return `<button onclick="requestAudio('${escapeHtml(articleId)}')" class="btn-generate">Listen with Voce</button>`;
+}
+
+function formatDuration(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60).toString().padStart(2, '0');
+  return `${m}:${s}`;
+}
+
+async function requestAudio(articleId) {
+  const container = document.getElementById('audio-player-section');
+  if (container) {
+    container.innerHTML = '<p class="text-sm text-gray-500 animate-pulse">Generating audio…</p>';
+  }
+  try {
+    const res = await fetch(`/api/articles/${articleId}/audio`, { method: 'POST' });
+    if (!res.ok) throw new Error('trigger failed');
+    const data = await res.json();
+    if (data.status === 'ready') {
+      const statusRes = await fetch(`/api/articles/${articleId}/audio/status`);
+      if (statusRes.ok) renderAudioSection(articleId, await statusRes.json(), null);
+    } else {
+      pollAudioStatus(articleId, 0);
+    }
+  } catch (_) {
+    showToast('Failed to start audio generation', 'error');
+    if (container) container.innerHTML = buildGenerateButton(articleId, false);
+  }
+}
+
+function pollAudioStatus(articleId, attempt) {
+  if (attempt >= 60) {
+    showToast('Audio generation timed out', 'error');
+    const container = document.getElementById('audio-player-section');
+    if (container) container.innerHTML = buildGenerateButton(articleId, false);
+    return;
+  }
+  setTimeout(async () => {
+    try {
+      const res = await fetch(`/api/articles/${articleId}/audio/status`);
+      if (!res.ok) throw new Error('status fetch failed');
+      const data = await res.json();
+      if (data.cached) {
+        renderAudioSection(articleId, data, null);
+      } else {
+        pollAudioStatus(articleId, attempt + 1);
+      }
+    } catch (_) {
+      pollAudioStatus(articleId, attempt + 1);
+    }
+  }, 2000);
+}
 
 // ── Sections ──────────────────────────────────────────────────────────────────
 async function loadSections() {
