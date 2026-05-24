@@ -39,7 +39,8 @@ def test_state_transition_to_listened(client):
 
 
 def test_state_transition_to_unread_clears_last_played(client):
-    client.post("/api/articles/art1/state", json={"status": "listened"})
+    listened_resp = client.post("/api/articles/art1/state", json={"status": "listened"})
+    assert listened_resp.json()["last_played_at"] is not None, "listened should set last_played_at"
     resp = client.post("/api/articles/art1/state", json={"status": "unread"})
     assert resp.status_code == 200
     assert resp.json()["last_played_at"] is None
@@ -159,14 +160,16 @@ def test_scheduler_feed_refresh_job_config():
     from voce.scheduler import build_scheduler
     s = build_scheduler(lambda: None)
     job = next(j for j in s.get_jobs() if j.id == "feed_refresh")
-    # Interval trigger stores the interval as a timedelta; check minutes field
-    assert job.trigger.interval.seconds // 60 == settings.feed_refresh_minutes
+    # total_seconds() is correct for intervals >= 24 h; .seconds would be modulo 86 400
+    assert job.trigger.interval.total_seconds() // 60 == settings.feed_refresh_minutes
 
 
 def test_scheduler_cache_sweep_job_config():
+    from apscheduler.triggers.cron import CronTrigger
     from voce.scheduler import build_scheduler
     s = build_scheduler(lambda: None)
     job = next(j for j in s.get_jobs() if j.id == "cache_sweep")
-    # Cron trigger; verify the hour field is set to 3
-    fields = {f.name: f for f in job.trigger.fields}
-    assert str(fields["hour"]) == "3"
+    # Locate hour field by canonical index rather than assuming field.name presence
+    hour_index = CronTrigger.FIELD_NAMES.index("hour")
+    hour_field = job.trigger.fields[hour_index]
+    assert str(hour_field) == "3"
