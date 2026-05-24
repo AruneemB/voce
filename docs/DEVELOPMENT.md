@@ -39,6 +39,7 @@ The test suite is in `tests/`. Tests are organised by module:
 | `test_frontend.py` | Static file serving, HTML element IDs, CDN tags, JS function definitions, CSS selectors |
 | `test_tts_chunking.py` | `chunk_text` (sentence/space/hard-split boundaries, `! `/ `? ` markers, last-boundary selection, empty-chunk filtering), `synthesize_chunk` (bytes-joining, error wrapping), `get_audio_duration` (mutagen delegation), `synthesize_article` (cache hit, stale-file recovery, 50 k-char cost guard, `TTSSynthesisError` propagation) |
 | `test_cache.py` | `sweep_expired_cache` (single and batch expiry, settings-default TTL, missing-file tolerance, same-day boundary), `get_cache_stats` (empty, single-entry, multi-entry, post-sweep state) |
+| `test_api_audio.py` | Audio status (uncached, cached with duration), stream 404 behaviour, stream success with reading-state side-effect, synthesis trigger (202 pending, 202 ready when cached, 404 for missing article) |
 
 Fixtures live in `tests/fixtures/`. The RSS fixture (`sample_feed.xml`) contains three representative entries covering normal articles, missing fields, and audio enclosures.
 
@@ -53,6 +54,34 @@ Feed tests use the XML fixture rather than making live HTTP requests. HTTP calls
 API and frontend tests both use FastAPI's `TestClient`. All `TestClient` instances supply `headers={"host": "127.0.0.1:8765"}` so that `LocalhostOnlyMiddleware` admits the test requests — this applies to static file requests (`/static/app.js`, `/static/styles.css`) as well as JSON API calls.
 
 Frontend tests verify structure rather than behaviour: they fetch the served files as text and use `in` membership checks (for element IDs, CDN URLs, function names, CSS selectors) and `re.search` (for `PAGE_SIZE = 30`). This approach confirms the files are wired correctly without a JavaScript runtime.
+
+### Testing the audio API layer
+
+`tests/test_api_audio.py` follows the same `TestClient` + in-memory SQLite fixture pattern as `test_api.py`. An additional `client_with_audio_cache` fixture pre-seeds an `audio_cache` row pointing to a real on-disk stub file (via `tmp_path`) and a `reading_state` row for the test article. The fixture yields `(client, conn)` so tests can assert database side-effects after the request:
+
+```python
+def test_audio_stream_cached_success(client_with_audio_cache):
+    c, conn = client_with_audio_cache
+    resp = c.get("/api/articles/art1/audio/stream")
+    assert resp.status_code == 200
+    row = conn.execute(
+        "SELECT status FROM reading_state WHERE article_id='art1'"
+    ).fetchone()
+    assert row["status"] == "listened"
+```
+
+The synthesis trigger endpoint dispatches `synthesize_article()` to a background thread, so tests patch `voce.api.synthesize_article` to prevent real ElevenLabs calls:
+
+```python
+with patch("voce.api.synthesize_article"):
+    resp = client.post("/api/articles/art1/audio")
+assert resp.status_code == 202
+assert resp.json()["status"] == "pending"
+```
+
+An `autouse` fixture clears `voce.api._synthesis_in_progress` before and after every test to prevent cross-test state leakage.
+
+To test the stale-row recovery path, delete the stub MP3 file before issuing the request. The endpoint should remove the orphaned `audio_cache` row and return `cached: false` (for the status endpoint) or `404` (for the stream endpoint).
 
 ### Testing the TTS layer
 
@@ -165,9 +194,9 @@ Add a new entry to `QUANTA_FEEDS` in `feeds.py` and a new entry to `SECTION_LABE
 
 1. Add the new column, table, index, or trigger to the DDL string in `db.py`
 2. Update the relevant dataclass `from_row()` in `models.py` if a new column is on an existing table
-3. If you are modifying an existing schema with production data, write a migration script in `scripts/`
+3. For new columns on existing tables, call `_add_column_if_missing(conn, table, column, col_type)` at the end of `bootstrap_schema()` — this is idempotent and handles pre-existing databases
 
-The DDL uses `IF NOT EXISTS` for tables and indexes, so new tables and indexes are safe to add without a migration. New columns on existing tables require an `ALTER TABLE ... ADD COLUMN` migration.
+The DDL uses `IF NOT EXISTS` for tables and indexes, so new tables and indexes are safe to add without a migration. New columns on existing tables use the `_add_column_if_missing()` helper rather than a separate migration script, because `bootstrap_schema()` runs on every startup.
 
 ### Modifying the frontend
 

@@ -1,7 +1,18 @@
 """SQLite connection factory and schema bootstrap for Voce."""
 
+import re
 import sqlite3
 from voce.config import settings
+
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_ALLOWED_COL_TYPES = {"INTEGER", "TEXT", "REAL", "BLOB", "NUMERIC"}
+
+
+def _safe_ident(name: str) -> str:
+    """Return *name* quoted for use as a SQL identifier, or raise ValueError."""
+    if not _IDENT_RE.match(name):
+        raise ValueError(f"Invalid SQL identifier: {name!r}")
+    return f'"{name}"'
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS articles (
@@ -71,6 +82,25 @@ END;
 """
 
 
+def _add_column_if_missing(
+    conn: sqlite3.Connection, table: str, column: str, col_type: str
+) -> None:
+    """Add *column* to *table* only if it does not already exist.
+
+    SQLite does not support ``ALTER TABLE … ADD COLUMN IF NOT EXISTS``, so we
+    inspect ``PRAGMA table_info`` and conditionally issue the ``ALTER TABLE``.
+    Idempotent; safe to call on every bootstrap.
+    """
+    col_type_upper = col_type.upper()
+    if col_type_upper not in _ALLOWED_COL_TYPES:
+        raise ValueError(f"Unsupported column type: {col_type!r}")
+    safe_table = _safe_ident(table)
+    safe_column = _safe_ident(column)
+    cols = {row[1] for row in conn.execute(f"PRAGMA table_info({safe_table})")}
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {safe_table} ADD COLUMN {safe_column} {col_type_upper}")
+
+
 def get_connection() -> sqlite3.Connection:
     """Open and configure a new SQLite connection. Caller is responsible for closing it."""
     settings.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -84,4 +114,5 @@ def get_connection() -> sqlite3.Connection:
 def bootstrap_schema(conn: sqlite3.Connection) -> None:
     """Create all tables, indexes, and triggers if they do not already exist."""
     conn.executescript(_DDL)
+    _add_column_if_missing(conn, "articles", "quanta_audio_url", "TEXT")
     conn.commit()

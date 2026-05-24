@@ -1,0 +1,140 @@
+"""Tests for audio synthesis and playback API endpoints."""
+
+import sqlite3
+from unittest.mock import patch
+
+import pytest
+from fastapi.testclient import TestClient
+
+from voce.api import app, get_conn
+from voce.db import bootstrap_schema
+
+
+@pytest.fixture(autouse=True)
+def clear_synthesis_state():
+    """Ensure _synthesis_in_progress is empty before and after every test."""
+    from voce.api import _synthesis_in_progress
+    _synthesis_in_progress.clear()
+    yield
+    _synthesis_in_progress.clear()
+
+
+@pytest.fixture
+def client():
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    bootstrap_schema(conn)
+    conn.execute(
+        "INSERT INTO articles (id, section, title, published_at, url, body_html, body_text) "
+        "VALUES (?,?,?,?,?,?,?)",
+        ("art1", "physics", "Test Article", "2024-01-01T00:00:00Z",
+         "https://example.com/1", "", "Body text here."),
+    )
+    conn.execute("INSERT INTO reading_state (article_id, status) VALUES ('art1', 'unread')")
+    conn.commit()
+
+    previous = app.dependency_overrides.get(get_conn)
+    app.dependency_overrides[get_conn] = lambda: conn
+    try:
+        with TestClient(app, headers={"host": "127.0.0.1:8765"}) as c:
+            yield c
+    finally:
+        if previous is None:
+            app.dependency_overrides.pop(get_conn, None)
+        else:
+            app.dependency_overrides[get_conn] = previous
+        conn.close()
+
+
+def test_audio_status_uncached(client):
+    resp = client.get("/api/articles/art1/audio/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["cached"] is False
+    assert data["url"] is None
+    assert data["pending"] is False
+
+
+def test_audio_stream_404_when_uncached(client):
+    resp = client.get("/api/articles/art1/audio/stream")
+    assert resp.status_code == 404
+
+
+def test_audio_trigger_returns_202_pending(client):
+    with patch("voce.api.synthesize_article"):
+        resp = client.post("/api/articles/art1/audio")
+    assert resp.status_code == 202
+    assert resp.json()["status"] == "pending"
+
+
+def test_audio_trigger_404_for_missing_article(client):
+    resp = client.post("/api/articles/does-not-exist/audio")
+    assert resp.status_code == 404
+
+
+@pytest.fixture
+def client_with_audio_cache(tmp_path):
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    bootstrap_schema(conn)
+    conn.execute(
+        "INSERT INTO articles (id, section, title, published_at, url, body_html, body_text) "
+        "VALUES (?,?,?,?,?,?,?)",
+        ("art1", "physics", "Test Article", "2024-01-01T00:00:00Z",
+         "https://example.com/1", "", "Body text here."),
+    )
+    conn.execute("INSERT INTO reading_state (article_id, status) VALUES ('art1', 'unread')")
+    mp3 = tmp_path / "art1.mp3"
+    mp3.write_bytes(b"fake-mp3-data")
+    conn.execute(
+        "INSERT INTO audio_cache (article_id, file_path, voice_id, duration_sec) VALUES (?,?,?,?)",
+        ("art1", str(mp3), "voice-test", 125),
+    )
+    conn.commit()
+
+    previous = app.dependency_overrides.get(get_conn)
+    app.dependency_overrides[get_conn] = lambda: conn
+    try:
+        with TestClient(app, headers={"host": "127.0.0.1:8765"}) as c:
+            yield c, conn
+    finally:
+        if previous is None:
+            app.dependency_overrides.pop(get_conn, None)
+        else:
+            app.dependency_overrides[get_conn] = previous
+        conn.close()
+
+
+def test_audio_status_cached(client_with_audio_cache):
+    c, _conn = client_with_audio_cache
+    resp = c.get("/api/articles/art1/audio/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["cached"] is True
+    assert data["url"] == "/api/articles/art1/audio/stream"
+    assert data["duration_sec"] == 125
+    assert data["pending"] is False
+
+
+def test_audio_trigger_returns_ready_when_cached(client_with_audio_cache):
+    c, _conn = client_with_audio_cache
+    resp = c.post("/api/articles/art1/audio")
+    assert resp.status_code == 202
+    data = resp.json()
+    assert data["status"] == "ready"
+    assert "url" in data
+
+
+def test_audio_stream_cached_success(client_with_audio_cache):
+    c, conn = client_with_audio_cache
+    resp = c.get("/api/articles/art1/audio/stream")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "audio/mpeg"
+    assert len(resp.content) > 0
+    row = conn.execute(
+        "SELECT status, last_played_at FROM reading_state WHERE article_id='art1'"
+    ).fetchone()
+    assert row["status"] == "listened"
+    assert row["last_played_at"] is not None

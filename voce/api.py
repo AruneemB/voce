@@ -4,6 +4,7 @@ import asyncio
 import ipaddress
 import sqlite3
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query
@@ -17,6 +18,9 @@ from starlette.responses import FileResponse, Response
 from voce.config import settings
 from voce.db import bootstrap_schema, get_connection
 from voce.feeds import refresh_all_feeds
+from voce.tts import synthesize_article
+
+_synthesis_in_progress: set[str] = set()
 
 SECTION_LABELS: dict[str, str] = {
     "physics": "Physics",
@@ -61,6 +65,13 @@ class TopicOut(BaseModel):
     article_count: int
 
 
+class AudioStatusOut(BaseModel):
+    cached: bool
+    url: Optional[str]
+    duration_sec: Optional[int]
+    pending: bool
+
+
 class LocalhostOnlyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         # Primary: reject connections from non-loopback IPs (not spoofable via headers).
@@ -103,6 +114,8 @@ def create_app() -> FastAPI:
     _app = FastAPI(title="Voce", lifespan=lifespan)
     _app.add_middleware(LocalhostOnlyMiddleware)
     _app.mount("/static", StaticFiles(directory="voce/static"), name="static")
+    settings.audio_cache_dir.mkdir(parents=True, exist_ok=True)
+    _app.mount("/audio", StaticFiles(directory=str(settings.audio_cache_dir)), name="audio")
     return _app
 
 
@@ -265,6 +278,93 @@ def list_topics(
         )
         for r in rows
     ]
+
+
+@app.post("/api/articles/{article_id}/audio", status_code=202)
+async def trigger_audio(article_id: str, conn: ConnDep) -> dict:
+    if article_id in _synthesis_in_progress:
+        return {"status": "pending"}
+    cache_row = conn.execute(
+        "SELECT file_path FROM audio_cache WHERE article_id=?", (article_id,)
+    ).fetchone()
+    if cache_row:
+        if Path(cache_row["file_path"]).exists():
+            return {"status": "ready", "url": f"/api/articles/{article_id}/audio/stream"}
+        conn.execute("DELETE FROM audio_cache WHERE article_id=?", (article_id,))
+        conn.commit()
+    article_row = conn.execute(
+        "SELECT 1 FROM articles WHERE id=?", (article_id,)
+    ).fetchone()
+    if article_row is None:
+        raise HTTPException(status_code=404, detail="Article not found")
+    _synthesis_in_progress.add(article_id)
+
+    def _run() -> None:
+        synth_conn = None
+        try:
+            synth_conn = get_connection()
+            synthesize_article(article_id, synth_conn)
+        except Exception:
+            logger.exception("Background synthesis failed for article {}", article_id)
+        finally:
+            if synth_conn is not None:
+                synth_conn.close()
+            _synthesis_in_progress.discard(article_id)
+
+    asyncio.get_event_loop().run_in_executor(None, _run)
+    return {"status": "pending"}
+
+
+@app.get("/api/articles/{article_id}/audio/status", response_model=AudioStatusOut)
+def get_audio_status(article_id: str, conn: ConnDep) -> AudioStatusOut:
+    row = conn.execute(
+        "SELECT file_path, duration_sec FROM audio_cache WHERE article_id=?",
+        (article_id,),
+    ).fetchone()
+    if row:
+        if Path(row["file_path"]).exists():
+            return AudioStatusOut(
+                cached=True,
+                url=f"/api/articles/{article_id}/audio/stream",
+                duration_sec=row["duration_sec"],
+                pending=article_id in _synthesis_in_progress,
+            )
+        conn.execute("DELETE FROM audio_cache WHERE article_id=?", (article_id,))
+        conn.commit()
+    return AudioStatusOut(
+        cached=False,
+        url=None,
+        duration_sec=None,
+        pending=article_id in _synthesis_in_progress,
+    )
+
+
+@app.get("/api/articles/{article_id}/audio/stream")
+def stream_audio(article_id: str, conn: ConnDep) -> FileResponse:
+    row = conn.execute(
+        "SELECT file_path, duration_sec FROM audio_cache WHERE article_id=?",
+        (article_id,),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Audio not found")
+    if not Path(row["file_path"]).exists():
+        conn.execute("DELETE FROM audio_cache WHERE article_id=?", (article_id,))
+        conn.commit()
+        raise HTTPException(status_code=404, detail="Audio file missing")
+    conn.execute(
+        "UPDATE audio_cache SET last_played_at=datetime('now') WHERE article_id=?",
+        (article_id,),
+    )
+    conn.execute(
+        "UPDATE reading_state SET status='listened', last_played_at=datetime('now') WHERE article_id=?",
+        (article_id,),
+    )
+    conn.commit()
+    return FileResponse(
+        row["file_path"],
+        media_type="audio/mpeg",
+        headers={"Content-Disposition": "inline"},
+    )
 
 
 @app.post("/api/refresh")

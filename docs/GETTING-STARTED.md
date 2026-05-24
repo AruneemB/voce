@@ -103,7 +103,12 @@ You should see the Voce interface load within a few seconds. The initial feed re
 
 **Refresh** — The Refresh button in the header triggers an immediate feed refresh. A green toast notification confirms the refresh started. New articles appear after a short delay.
 
-**Audio synthesis** — Voce synthesises article narrations on demand via ElevenLabs. When synthesis is triggered (Phase 8), a single MP3 is written to `data/audio_cache/` and reused on all subsequent plays — ElevenLabs is only called once per article. Synthesised audio never leaves your machine.
+**Audio playback** — The article detail view includes an audio player section directly below the "Open in Quanta ↗" link.
+
+- If Quanta Magazine included a narration URL in the RSS feed for that article, the player appears immediately with a "Quanta's own narration" label.
+- Otherwise, a "Listen with Voce" button lets you request on-demand synthesis via ElevenLabs. Clicking it shows an animated "Generating audio…" spinner while synthesis runs in the background. When synthesis completes (typically within a minute for a standard article), the spinner is replaced by an `<audio controls>` player.
+
+A single MP3 is written to `data/audio_cache/` and reused on all subsequent plays — ElevenLabs is only called once per article per voice configuration. Synthesised audio never leaves your machine.
 
 ---
 
@@ -115,7 +120,7 @@ A working setup satisfies all of the following:
 - The Physics, Mathematics, Biology, and Computer Science sections appear in the sidebar with unread counts
 - Article cards appear after a few seconds (the initial feed refresh completes in the background)
 - Clicking a section button filters the article list to that section
-- Clicking an article card shows the article detail pane with prose body text and an "Open in Quanta ↗" link
+- Clicking an article card shows the article detail pane with prose body text, an "Open in Quanta ↗" link, and an audio player or "Listen with Voce" button
 - The URL updates to `#article/{id}` when an article is selected, and navigating to that URL directly opens the article
 - Scrolling to the bottom of the article list loads the next page automatically
 - The topic filter dropdown narrows the article list to a single topic and updates immediately on selection
@@ -143,3 +148,9 @@ Navigate manually to `http://127.0.0.1:8765`. Use `--no-browser` to suppress the
 
 **ElevenLabs synthesis fails or article is refused**
 Confirm that `ELEVENLABS_API_KEY` in `.env` is valid and has not expired. Check your ElevenLabs dashboard for quota status. Articles whose full narration text (attribution preamble + body) exceeds 50,000 characters are refused by design to prevent excessive API spend — a `WARNING` line is written to the log when this happens.
+
+**"Listen with Voce" button does nothing or the spinner never resolves**
+If the button does not respond, check the browser console for network errors. If the spinner runs for more than two minutes, a timeout toast ("Audio generation timed out") will appear and the button will be restored — you can try again. Long synthesis times are usually caused by slow ElevenLabs responses; check your network connection and ElevenLabs status. If synthesis fails silently, check the server terminal for `ERROR` log lines from `voce.api`.
+
+**Audio player appears but audio does not play**
+Some browsers block `<audio>` autoplay or require a user interaction before audio can start. Click the play button in the audio element directly. If the player shows an error, the cached MP3 may be corrupted — delete `data/audio_cache/{article_id}.mp3` and synthesise again via the button.

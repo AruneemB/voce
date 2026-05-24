@@ -42,10 +42,20 @@ Quanta Magazine RSS feeds
   │   FastAPI   │  api.py                      │
   │  HTTP layer │──────────────────────────────┘
   └─────────────┘
-         │ HTTP/JSON + MP3 streaming
-         ▼
-  Browser (localhost:8765)
-  index.html + app.js + Tailwind CDN + htmx
+         │ HTTP/JSON                     POST /api/articles/{id}/audio
+         │ GET /api/articles/{id}/audio/status  ◄──────────────────┐
+         │ GET /api/articles/{id}/audio/stream  ────────────────────┐│
+         ▼                                                          ││
+  Browser (localhost:8765)                                          ││
+  index.html + app.js + Tailwind CDN + htmx                        ││
+         │                                                          ││
+         │  renderAudioSection / pollAudioStatus                    ││
+         │  (currentArticleId guard aborts stale polls)            ││
+         └──────────────────────────────────────────────────────────┘│
+                                                                      │
+         _synthesis_in_progress (module-level set) ─────────────────┘
+         fire-and-forget executor → synthesize_article() in thread
+         (_run() opens own conn; releases in finally block)
 ```
 
 ---
@@ -140,6 +150,10 @@ A FastAPI application with `LocalhostOnlyMiddleware` applied globally. Routes ar
 
 There is no business logic in the API layer. Ingestion, enrichment, and synthesis logic all live in their respective modules.
 
+The audio synthesis trigger (`POST /api/articles/{id}/audio`) dispatches `synthesize_article()` to a thread-pool executor with `asyncio.get_event_loop().run_in_executor()` and returns `202` immediately without awaiting the result (fire-and-forget). In-progress article IDs are tracked in the module-level set `_synthesis_in_progress`. This set is reset on server restart, which is acceptable for v1: any article whose synthesis was interrupted simply shows "pending" on the next status poll until the user triggers synthesis again.
+
+Cached MP3 files are served from `settings.audio_cache_dir` via two routes: the `GET /audio/stream` endpoint (which also updates `last_played_at` and marks the article as listened), and a `StaticFiles` mount at `/audio` that exposes the directory directly for browsers that request byte ranges for seeking.
+
 ### Frontend — `voce/static/`
 
 A single-page application built with vanilla JavaScript, htmx, and Tailwind CSS (both loaded from CDN — no build step). The layout has three columns filling the full viewport height:
@@ -153,7 +167,7 @@ Navigation uses `history.pushState` so the URL reflects the selected article (`#
 
 **XSS protection** — Every API-sourced string injected into `innerHTML` is passed through `escapeHtml()`, which encodes `&`, `<`, `>`, `"`, and `'` as HTML entities. Reading status strings used in CSS class names are validated against a `VALID_STATUSES` whitelist (`"unread"`, `"queued"`, `"listened"`) before interpolation; any unrecognised value falls back to `"unread"` rather than being used as-is. This ensures that malicious content in article titles, author names, or summaries cannot execute as HTML or JavaScript.
 
-The audio player UI and reading status mutation buttons are not yet implemented — they are planned for later phases.
+When an article is opened, `loadArticleDetail()` sets `currentArticleId` then fetches `/api/articles/{id}/audio/status` in a nested try/catch isolated from the article fetch. If the status request fails for any reason, `renderAudioSection()` is called with a default `{ cached: false, pending: false }` payload so the generate button always appears. Based on the response, `renderAudioSection()` shows an `<audio controls>` player (if audio is cached), a Quanta-narration player with a label (if `quanta_audio_url` is set), or a "Listen with Voce" button. The button carries no `onclick` attribute; a `click` listener is attached via `addEventListener` after the HTML is written. Clicking the button calls `requestAudio()`, which posts to `/api/articles/{id}/audio` and calls `pollAudioStatus()` if the response is `"pending"`. `pollAudioStatus()` checks `articleId === currentArticleId` at the start of each tick and aborts silently if the user has navigated away. Polling runs every 2 seconds for up to 120 seconds; on completion, `renderAudioSection()` swaps in the audio player. Reading status mutation buttons are not yet wired (planned for Phase 9).
 
 ---
 
