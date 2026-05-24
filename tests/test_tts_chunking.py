@@ -70,6 +70,25 @@ def test_chunk_text_splits_at_question_boundary():
         assert len(chunk) <= ELEVENLABS_CHAR_LIMIT
 
 
+def test_chunk_text_picks_latest_sentence_boundary_within_limit():
+    # ". " at position 100, "! " at position 200 — max() picks the later one
+    text = "A" * 100 + ". " + "A" * 98 + "! " + "B" * 3000
+    result = chunk_text(text)
+    assert result[0].endswith("! ")
+
+
+def test_chunk_text_produces_no_empty_strings():
+    cases = [
+        "x" * ELEVENLABS_CHAR_LIMIT,
+        "x" * (ELEVENLABS_CHAR_LIMIT * 3),
+        "Hello world. " * 300,
+        "word " * 600,
+    ]
+    for text in cases:
+        result = chunk_text(text)
+        assert all(c for c in result), f"Empty chunk found for input length {len(text)}"
+
+
 # ── synthesize_article tests ──────────────────────────────────────────────────
 
 @pytest.fixture
