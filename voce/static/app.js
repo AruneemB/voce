@@ -35,7 +35,7 @@ async function safeFetch(url, options = {}) {
   try {
     const resp = await fetch(url, options);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    return resp.json();
+    return await resp.json();
   } catch (err) {
     showToast(`Request failed: ${err.message}`, 'error');
     throw err;
@@ -196,6 +196,9 @@ function setupSearch() {
             <span class="status-badge status-${status} mt-1">${escapeHtml(status)}</span>
           `;
           card.addEventListener('click', () => loadArticleDetail(article.id));
+          card.addEventListener('keydown', e => {
+            if (e.key === 'Enter' || e.key === ' ') loadArticleDetail(article.id);
+          });
           list.appendChild(card);
         });
       } catch (_) {
