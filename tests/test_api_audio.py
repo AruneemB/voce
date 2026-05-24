@@ -85,6 +85,7 @@ def client_with_audio_cache(tmp_path):
         ("art1", "physics", "Test Article", "2024-01-01T00:00:00Z",
          "https://example.com/1", "", "Body text here."),
     )
+    conn.execute("INSERT INTO reading_state (article_id, status) VALUES ('art1', 'unread')")
     mp3 = tmp_path / "art1.mp3"
     mp3.write_bytes(b"fake-mp3-data")
     conn.execute(
@@ -97,7 +98,7 @@ def client_with_audio_cache(tmp_path):
     app.dependency_overrides[get_conn] = lambda: conn
     try:
         with TestClient(app, headers={"host": "127.0.0.1:8765"}) as c:
-            yield c
+            yield c, conn
     finally:
         if previous is None:
             app.dependency_overrides.pop(get_conn, None)
@@ -107,7 +108,8 @@ def client_with_audio_cache(tmp_path):
 
 
 def test_audio_status_cached(client_with_audio_cache):
-    resp = client_with_audio_cache.get("/api/articles/art1/audio/status")
+    c, _conn = client_with_audio_cache
+    resp = c.get("/api/articles/art1/audio/status")
     assert resp.status_code == 200
     data = resp.json()
     assert data["cached"] is True
@@ -117,8 +119,22 @@ def test_audio_status_cached(client_with_audio_cache):
 
 
 def test_audio_trigger_returns_ready_when_cached(client_with_audio_cache):
-    resp = client_with_audio_cache.post("/api/articles/art1/audio")
+    c, _conn = client_with_audio_cache
+    resp = c.post("/api/articles/art1/audio")
     assert resp.status_code == 202
     data = resp.json()
     assert data["status"] == "ready"
     assert "url" in data
+
+
+def test_audio_stream_cached_success(client_with_audio_cache):
+    c, conn = client_with_audio_cache
+    resp = c.get("/api/articles/art1/audio/stream")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "audio/mpeg"
+    assert len(resp.content) > 0
+    row = conn.execute(
+        "SELECT status, last_played_at FROM reading_state WHERE article_id='art1'"
+    ).fetchone()
+    assert row["status"] == "listened"
+    assert row["last_played_at"] is not None
