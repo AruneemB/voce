@@ -3,6 +3,7 @@ let currentSection = null;
 let currentTopic = null;
 let currentStatus = null;
 let currentOffset = 0;
+let currentArticleId = null;
 const PAGE_SIZE = 30;
 
 // Allowed reading-status values — used to whitelist CSS class names derived
@@ -83,6 +84,7 @@ async function loadArticles(reset = true) {
 
 // ── Article Detail ────────────────────────────────────────────────────────────
 async function loadArticleDetail(articleId) {
+  currentArticleId = articleId;
   document.querySelectorAll('.article-card').forEach(c => c.classList.remove('active'));
   const activeCard = document.querySelector(`.article-card[data-article-id="${articleId}"]`);
   if (activeCard) activeCard.classList.add('active');
@@ -108,10 +110,14 @@ async function loadArticleDetail(articleId) {
 
     history.pushState({ articleId }, '', `#article/${articleId}`);
 
-    const statusRes = await fetch(`/api/articles/${articleId}/audio/status`);
-    if (statusRes.ok) {
-      const statusData = await statusRes.json();
+    try {
+      const statusRes = await fetch(`/api/articles/${articleId}/audio/status`);
+      const statusData = statusRes.ok
+        ? await statusRes.json()
+        : { cached: false, pending: false };
       renderAudioSection(articleId, statusData, article);
+    } catch (_) {
+      renderAudioSection(articleId, { cached: false, pending: false }, article);
     }
   } catch (e) {
     showToast('Failed to load article', 'error');
@@ -240,7 +246,10 @@ function renderAudioSection(articleId, statusData, article) {
       buildAudioPlayer(article.quanta_audio_url, null) +
       '<p class="text-sm text-gray-500 mt-1">Quanta\'s own narration</p>';
   } else {
-    container.innerHTML = buildGenerateButton(articleId, statusData.pending);
+    container.innerHTML = buildGenerateButton(statusData.pending);
+    if (!statusData.pending) {
+      container.querySelector('.btn-generate').addEventListener('click', () => requestAudio(articleId));
+    }
   }
 }
 
@@ -252,11 +261,11 @@ function buildAudioPlayer(src, durationSec) {
   );
 }
 
-function buildGenerateButton(articleId, pending) {
+function buildGenerateButton(pending) {
   if (pending) {
     return '<p class="text-sm text-gray-500 animate-pulse">Generating audio…</p>';
   }
-  return `<button onclick="requestAudio('${escapeHtml(articleId)}')" class="btn-generate">Listen with Voce</button>`;
+  return '<button class="btn-generate">Listen with Voce</button>';
 }
 
 function formatDuration(seconds) {
@@ -282,18 +291,26 @@ async function requestAudio(articleId) {
     }
   } catch (_) {
     showToast('Failed to start audio generation', 'error');
-    if (container) container.innerHTML = buildGenerateButton(articleId, false);
+    if (container) {
+      container.innerHTML = buildGenerateButton(false);
+      container.querySelector('.btn-generate').addEventListener('click', () => requestAudio(articleId));
+    }
   }
 }
 
 function pollAudioStatus(articleId, attempt) {
   if (attempt >= 60) {
+    if (articleId !== currentArticleId) return;
     showToast('Audio generation timed out', 'error');
     const container = document.getElementById('audio-player-section');
-    if (container) container.innerHTML = buildGenerateButton(articleId, false);
+    if (container) {
+      container.innerHTML = buildGenerateButton(false);
+      container.querySelector('.btn-generate').addEventListener('click', () => requestAudio(articleId));
+    }
     return;
   }
   setTimeout(async () => {
+    if (articleId !== currentArticleId) return;
     try {
       const res = await fetch(`/api/articles/${articleId}/audio/status`);
       if (!res.ok) throw new Error('status fetch failed');
