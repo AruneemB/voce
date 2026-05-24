@@ -133,12 +133,14 @@ The `last_played_at` field in `audio_cache` is updated on every cache hit. `swee
 
 ### Scheduling — `scheduler.py`
 
-An `APScheduler` `BackgroundScheduler` runs two jobs:
+`build_scheduler(conn_factory)` creates an APScheduler `BackgroundScheduler` with two jobs:
 
-- **Feed refresh** — runs every N minutes (default 30, configurable via `FEED_REFRESH_MINUTES`)
-- **Cache sweep** — runs daily at 3:00 AM
+- **Feed refresh** (`feed_refresh`) — interval trigger, fires every `FEED_REFRESH_MINUTES` minutes (default 30). Calls `refresh_all_feeds()` using a fresh connection opened via `conn_factory`.
+- **Cache sweep** (`cache_sweep`) — cron trigger, fires daily at 03:00 UTC. Calls `sweep_expired_cache()` using a fresh connection.
 
-The scheduler starts during the FastAPI lifespan setup and shuts down cleanly when the server stops.
+Both jobs open and close their own connections independently to avoid cross-thread connection sharing. Errors are caught and logged so that one job failure does not affect the other.
+
+The scheduler is started in the FastAPI `lifespan` context manager immediately after schema bootstrap. An additional daemon thread triggers an immediate `refresh_all_feeds()` call on startup so that the database is populated without waiting for the first interval tick. The lifespan teardown calls `scheduler.shutdown(wait=False)`.
 
 ### API layer — `api.py`
 
@@ -167,7 +169,9 @@ Navigation uses `history.pushState` so the URL reflects the selected article (`#
 
 **XSS protection** — Every API-sourced string injected into `innerHTML` is passed through `escapeHtml()`, which encodes `&`, `<`, `>`, `"`, and `'` as HTML entities. Reading status strings used in CSS class names are validated against a `VALID_STATUSES` whitelist (`"unread"`, `"queued"`, `"listened"`) before interpolation; any unrecognised value falls back to `"unread"` rather than being used as-is. This ensures that malicious content in article titles, author names, or summaries cannot execute as HTML or JavaScript.
 
-When an article is opened, `loadArticleDetail()` sets `currentArticleId` then fetches `/api/articles/{id}/audio/status` in a nested try/catch isolated from the article fetch. If the status request fails for any reason, `renderAudioSection()` is called with a default `{ cached: false, pending: false }` payload so the generate button always appears. Based on the response, `renderAudioSection()` shows an `<audio controls>` player (if audio is cached), a Quanta-narration player with a label (if `quanta_audio_url` is set), or a "Listen with Voce" button. The button carries no `onclick` attribute; a `click` listener is attached via `addEventListener` after the HTML is written. Clicking the button calls `requestAudio()`, which posts to `/api/articles/{id}/audio` and calls `pollAudioStatus()` if the response is `"pending"`. `pollAudioStatus()` checks `articleId === currentArticleId` at the start of each tick and aborts silently if the user has navigated away. Polling runs every 2 seconds for up to 120 seconds; on completion, `renderAudioSection()` swaps in the audio player. Reading status mutation buttons are not yet wired (planned for Phase 9).
+When an article is opened, `loadArticleDetail()` sets `currentArticleId` then fetches `/api/articles/{id}/audio/status` in a nested try/catch isolated from the article fetch. If the status request fails for any reason, `renderAudioSection()` is called with a default `{ cached: false, pending: false }` payload so the generate button always appears. Based on the response, `renderAudioSection()` shows an `<audio controls>` player (if audio is cached), a Quanta-narration player with a label (if `quanta_audio_url` is set), or a "Listen with Voce" button. The button carries no `onclick` attribute; a `click` listener is attached via `addEventListener` after the HTML is written. Clicking the button calls `requestAudio()`, which posts to `/api/articles/{id}/audio` and calls `pollAudioStatus()` if the response is `"pending"`. `pollAudioStatus()` checks `articleId === currentArticleId` at the start of each tick and aborts silently if the user has navigated away. Polling runs every 2 seconds for up to 120 seconds; on completion, `renderAudioSection()` swaps in the audio player.
+
+The article detail view also renders three state toggle buttons — Queue, Mark Listened, and Mark Unread — via `data-state-action` attributes. Event listeners are attached with `addEventListener` after the HTML is written (no `onclick` attributes). Each button calls `setState(articleId, status)`, which POSTs to `POST /api/articles/{id}/state`, updates the `#current-state` label with the new status, and calls `loadSections()` to refresh the unread badge counts in the sidebar. The `articleId` value comes from the closure, never from HTML interpolation, so there is no XSS risk regardless of article content.
 
 ---
 
