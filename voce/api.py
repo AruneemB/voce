@@ -18,6 +18,7 @@ from starlette.responses import FileResponse, Response
 from voce.config import settings
 from voce.db import bootstrap_schema, get_connection
 from voce.feeds import refresh_all_feeds
+from voce.scheduler import build_scheduler
 from voce.tts import synthesize_article
 
 _synthesis_in_progress: set[str] = set()
@@ -114,11 +115,18 @@ ConnDep = Annotated[sqlite3.Connection, Depends(get_conn)]
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import threading
     conn = get_connection()
     bootstrap_schema(conn)
     conn.close()
     logger.info("Voce schema bootstrapped")
+    scheduler = build_scheduler(get_connection)
+    scheduler.start()
+    threading.Thread(
+        target=lambda: refresh_all_feeds(get_connection()), daemon=True
+    ).start()
     yield
+    scheduler.shutdown(wait=False)
 
 
 def create_app() -> FastAPI:
