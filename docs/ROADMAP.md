@@ -68,13 +68,21 @@ A schema migration helper `_add_column_if_missing()` in `db.py` ensures the `art
 
 **214 tests pass across Phases 1–8** (6 new tests in `test_api_audio.py` covering audio status for uncached and cached articles, stream 404 behaviour, synthesis trigger with mocked `synthesize_article`, 404 for missing articles, and "ready" response when audio is already cached).
 
+### Phase 9 — Reading state and scheduler
+
+The reading state write path and background scheduler are now fully implemented:
+
+- **`POST /api/articles/{id}/state`** — persists reading status changes using an UPSERT with transition rules: transitioning to `"listened"` sets `last_played_at` to `now`; transitioning to `"unread"` clears `last_played_at` to `NULL`; transitioning to `"queued"` leaves `last_played_at` unchanged. Returns a `ReadingStateOut` object. Returns `404` if the article does not exist; `422` if the status value is invalid.
+- **`GET /api/queue`** — returns all articles with `status='queued'` ordered by `updated_at ASC` as a flat `list[ArticleSummaryOut]` (no pagination).
+- **`voce/scheduler.py`** — implements `build_scheduler(conn_factory)`, which creates an APScheduler `BackgroundScheduler` with two jobs: `feed_refresh` (interval trigger, every `FEED_REFRESH_MINUTES` minutes) and `cache_sweep` (cron trigger, daily at 03:00 UTC). Each job opens its own connection via `conn_factory` and closes it in a `finally` block.
+- **Lifespan integration** — the FastAPI lifespan starts the scheduler on startup, triggers an immediate feed refresh in a daemon thread, and shuts the scheduler down cleanly on teardown.
+- **State toggle buttons** — Queue / Mark Listened / Mark Unread buttons added to the article detail view. `setState()` POSTs to the state endpoint, updates the status label, and refreshes the section unread counts. Buttons use `data-state-action` attributes with `addEventListener` — no `onclick` attributes, consistent with the XSS-safe pattern established in Phase 8.
+
+**228 tests pass across Phases 1–9** (14 new tests in `tests/test_state.py` covering all state transitions, `last_played_at` clearing on unread transition, the UPSERT-creates-row path, 422 on invalid status, 404 for missing articles, queue endpoint responses (queued only, empty, ordering, exclusion of other statuses), and scheduler job count and configuration (interval and cron trigger fields)).
+
 ---
 
 ## What is coming
-
-### Phase 9 — Reading state and scheduler
-
-The `POST /api/articles/{id}/state` endpoint persists reading status changes. `GET /api/queue` returns all queued articles. The `scheduler.py` background jobs run the feed refresh on a configurable interval and the cache sweep daily at 03:00.
 
 ### Phase 10 — Polish
 
