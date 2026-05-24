@@ -2,6 +2,7 @@
 .history/
 .specstory/
 .cursorindexingignore
+.vscode
 
 # Project docs (non-source)
 docs-voce/
