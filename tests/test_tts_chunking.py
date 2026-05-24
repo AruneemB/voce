@@ -5,7 +5,8 @@ import pytest
 
 from voce.db import bootstrap_schema
 from voce.exceptions import ArticleNotFoundError, ArticleTextMissingError
-from voce.tts import ELEVENLABS_CHAR_LIMIT, chunk_text, synthesize_article
+from voce.exceptions import TTSSynthesisError
+from voce.tts import ELEVENLABS_CHAR_LIMIT, chunk_text, get_audio_duration, synthesize_article, synthesize_chunk
 
 
 # ── chunk_text tests ──────────────────────────────────────────────────────────
@@ -87,6 +88,33 @@ def test_chunk_text_produces_no_empty_strings():
     for text in cases:
         result = chunk_text(text)
         assert all(c for c in result), f"Empty chunk found for input length {len(text)}"
+
+
+# ── synthesize_chunk tests ────────────────────────────────────────────────────
+
+def test_synthesize_chunk_joins_bytes_from_iterator():
+    mock_client = MagicMock()
+    mock_client.text_to_speech.convert.return_value = iter([b"abc", b"def", b"ghi"])
+    result = synthesize_chunk("some text", mock_client)
+    assert result == b"abcdefghi"
+
+
+def test_synthesize_chunk_raises_tts_synthesis_error_on_api_failure():
+    mock_client = MagicMock()
+    mock_client.text_to_speech.convert.side_effect = RuntimeError("API error")
+    with pytest.raises(TTSSynthesisError) as exc_info:
+        synthesize_chunk("some text", mock_client)
+    assert exc_info.value.article_id == "unknown"
+
+
+# ── get_audio_duration tests ──────────────────────────────────────────────────
+
+def test_get_audio_duration_returns_length_via_mutagen():
+    mock_audio = MagicMock()
+    mock_audio.info.length = 42.5
+    with patch("voce.tts.MP3", return_value=mock_audio):
+        result = get_audio_duration(b"fake-mp3-bytes")
+    assert result == 42.5
 
 
 # ── synthesize_article tests ──────────────────────────────────────────────────
