@@ -18,9 +18,9 @@ Not all endpoints described in this reference are implemented yet. The table bel
 | `GET /api/search` | Planned | 10 |
 | `GET /api/queue` | Planned | 9 |
 | `POST /api/articles/{id}/state` | Planned | 9 |
-| `POST /api/articles/{id}/audio` | Planned | 8 |
-| `GET /api/articles/{id}/audio/status` | Planned | 8 |
-| `GET /api/articles/{id}/audio/stream` | Planned | 8 |
+| `POST /api/articles/{id}/audio` | Implemented | 8 |
+| `GET /api/articles/{id}/audio/status` | Implemented | 8 |
+| `GET /api/articles/{id}/audio/stream` | Implemented | 8 |
 
 > **Note on search:** The frontend (`app.js`) attempts `GET /api/search?q=` first and falls back to `GET /api/articles?q=` on a `404`. This means full-text search works today via the `q` parameter on `/api/articles`. The dedicated `/api/search` endpoint (with richer response metadata) is a Phase 10 addition.
 
@@ -284,30 +284,24 @@ Updates the reading status of an article.
 
 ---
 
-## Audio _(planned — Phase 8)_
-
-> The synthesis back-end (`synthesize_article()` in `tts.py`) is fully implemented and tested. Phase 8 wires it to these HTTP routes and adds the in-page audio player.
+## Audio
 
 ### `POST /api/articles/{article_id}/audio`
 
-Triggers TTS synthesis for an article. If synthesis is already cached, returns immediately. If synthesis is in progress or not yet started, returns a `202 Accepted` response.
+Triggers on-demand TTS synthesis for an article. Returns immediately in all cases — synthesis runs in a background thread. Checking progress requires polling `GET /audio/status`.
 
-**Response** — `200 OK` (audio ready)
+**Response** — `202 Accepted` (synthesis started or already in progress)
 
 ```json
-{
-  "article_id": "a3f2b1c8d4e5f6a7",
-  "status": "ready",
-  "duration_sec": 312
-}
+{ "status": "pending" }
 ```
 
-**Response** — `202 Accepted` (synthesis queued or in progress)
+**Response** — `202 Accepted` (audio is already cached — no synthesis needed)
 
 ```json
 {
-  "article_id": "a3f2b1c8d4e5f6a7",
-  "status": "pending"
+  "status": "ready",
+  "url": "/api/articles/a3f2b1c8d4e5f6a7/audio/stream"
 }
 ```
 
@@ -315,51 +309,54 @@ Triggers TTS synthesis for an article. If synthesis is already cached, returns i
 
 | Status | Condition |
 |--------|-----------|
-| `404 Not Found` | No article with the given ID exists |
-| `413 Content Too Large` | Article body exceeds 50,000 characters; synthesis refused to prevent excessive API cost |
-| `500 Internal Server Error` | ElevenLabs synthesis failed |
+| `404 Not Found` | No article with the given ID exists in the database |
+
+> **Cost guard:** `synthesize_article()` refuses articles whose narration text exceeds 50,000 characters and logs a `WARNING`. The background task catches this and logs it; the endpoint itself has already returned `202`.
 
 ---
 
 ### `GET /api/articles/{article_id}/audio/status`
 
-Polls the synthesis status for an article without triggering synthesis.
+Returns the current audio state for an article without triggering synthesis. The frontend polls this endpoint (every 2 seconds, up to 60 attempts) after `POST /audio` returns `"pending"`.
 
 **Response** — `200 OK`
 
 ```json
 {
-  "article_id": "a3f2b1c8d4e5f6a7",
-  "status": "ready",
-  "duration_sec": 312
+  "cached": true,
+  "url": "/api/articles/a3f2b1c8d4e5f6a7/audio/stream",
+  "duration_sec": 312,
+  "pending": false
 }
 ```
 
-| `status` value | Meaning |
-|----------------|---------|
-| `"ready"` | Audio is cached and available for streaming |
-| `"pending"` | Synthesis has not yet been triggered |
-| `"synthesising"` | Synthesis is currently in progress |
+| Field | Type | Nullable | Description |
+|-------|------|----------|-------------|
+| `cached` | boolean | No | `true` if an `audio_cache` row exists for this article |
+| `url` | string | Yes | Stream URL (`/api/articles/{id}/audio/stream`) when `cached` is true; `null` otherwise |
+| `duration_sec` | integer | Yes | Audio duration in seconds when `cached` is true; `null` otherwise |
+| `pending` | boolean | No | `true` if synthesis is currently running in a background thread |
+
+When `cached` is `false` and `pending` is `false`, no synthesis has been started — click "Listen with Voce" to begin.
 
 ---
 
 ### `GET /api/articles/{article_id}/audio/stream`
 
-Streams the cached MP3 file for an article. Supports HTTP range requests for seek support in the browser audio player.
+Serves the cached MP3 file via `FileResponse`. Also updates `audio_cache.last_played_at` (used by the cache sweep for expiry) and sets `reading_state.status` to `"listened"`.
 
-**Headers**
+**Response** — `200 OK`
 
 | Header | Value |
 |--------|-------|
 | `Content-Type` | `audio/mpeg` |
 | `Content-Disposition` | `inline` |
-| `Accept-Ranges` | `bytes` |
 
 **Error responses**
 
 | Status | Condition |
 |--------|-----------|
-| `404 Not Found` | No audio cached for this article (trigger synthesis first) |
+| `404 Not Found` | No audio cached for this article — trigger synthesis first via `POST /audio` |
 
 ---
 
@@ -397,4 +394,4 @@ Returns `voce/static/index.html` — the single-page browser UI. The HTML shell,
 | `GET /static/styles.css` | Custom CSS (prose, cards, badges, toast) |
 | `GET /static/favicon.svg` | Browser tab icon |
 
-All subsequent UI data fetches go through the JSON endpoints documented above. The browsing UI (Phase 6) is fully implemented; audio playback (Phase 8) and reading status mutation from the UI (Phase 9) are not yet wired.
+All subsequent UI data fetches go through the JSON endpoints documented above. The browsing UI (Phase 6) and audio playback (Phase 8) are fully implemented; reading status mutation from the UI (Phase 9) is not yet wired.
