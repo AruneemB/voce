@@ -310,7 +310,7 @@ Updates the reading status of an article. Uses an UPSERT — creating the `readi
   "article_id": "a3f2b1c8d4e5f6a7",
   "status": "queued",
   "last_played_at": null,
-  "updated_at": "2024-03-15T14:30:00"
+  "updated_at": "2024-03-15T14:30:00Z"
 }
 ```
 
