@@ -40,6 +40,7 @@ The test suite is in `tests/`. Tests are organised by module:
 | `test_tts_chunking.py` | `chunk_text` (sentence/space/hard-split boundaries, `! `/ `? ` markers, last-boundary selection, empty-chunk filtering), `synthesize_chunk` (bytes-joining, error wrapping), `get_audio_duration` (mutagen delegation), `synthesize_article` (cache hit, stale-file recovery, 50 k-char cost guard, `TTSSynthesisError` propagation) |
 | `test_cache.py` | `sweep_expired_cache` (single and batch expiry, settings-default TTL, missing-file tolerance, same-day boundary), `get_cache_stats` (empty, single-entry, multi-entry, post-sweep state) |
 | `test_api_audio.py` | Audio status (uncached, cached with duration), stream 404 behaviour, stream success with reading-state side-effect, synthesis trigger (202 pending, 202 ready when cached, 404 for missing article) |
+| `test_state.py` | State transitions to queued/listened/unread; `last_played_at` cleared on unread transition; UPSERT creates row when none exists; 422 on invalid status; 404 for missing article; queue endpoint returns only queued articles, returns empty array, excludes other statuses, orders by `updated_at ASC`; scheduler has exactly two jobs (`feed_refresh`, `cache_sweep`) with correct trigger types and interval/cron configuration |
 
 Fixtures live in `tests/fixtures/`. The RSS fixture (`sample_feed.xml`) contains three representative entries covering normal articles, missing fields, and audio enclosures.
 
