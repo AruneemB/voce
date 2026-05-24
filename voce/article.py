@@ -70,6 +70,8 @@ def clean_html_for_tts(html: str) -> str:
             tag.decompose()
 
     for tag in soup.find_all(True):
+        if tag.attrs is None:
+            continue
         classes = " ".join(tag.get("class") or []).lower()
         if any(sub in classes for sub in _REMOVE_CLASS_SUBSTRINGS):
             tag.decompose()
