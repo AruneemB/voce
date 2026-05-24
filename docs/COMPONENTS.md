@@ -37,15 +37,18 @@ All other modules import `settings` from this module. No other module reads from
 **Owns:** Opening SQLite connections and bootstrapping the schema on first run.
 
 ```python
+def _add_column_if_missing(conn, table, column, col_type) -> None: ...
 def get_connection() -> sqlite3.Connection: ...
 def bootstrap_schema(conn: sqlite3.Connection) -> None: ...
 ```
 
 `get_connection()` opens a new connection each time it is called. It sets `row_factory = sqlite3.Row` (so columns are accessible by name), enables WAL journal mode, and turns on foreign key enforcement. Callers are responsible for closing the connection.
 
-`bootstrap_schema()` runs the full DDL script via `executescript()`. All `CREATE TABLE`, `CREATE INDEX`, `CREATE VIRTUAL TABLE`, and `CREATE TRIGGER` statements use `IF NOT EXISTS`, so calling this on an existing database is safe and idempotent.
+`bootstrap_schema()` runs the full DDL script via `executescript()`. All `CREATE TABLE`, `CREATE INDEX`, `CREATE VIRTUAL TABLE`, and `CREATE TRIGGER` statements use `IF NOT EXISTS`, so calling this on an existing database is safe and idempotent. After running the DDL, it calls `_add_column_if_missing()` for any column that was added to an existing table after the initial schema was deployed.
 
-**Invariant:** No module other than `db.py` contains DDL. If you need to add a table, column, or index, it goes here.
+`_add_column_if_missing()` inspects `PRAGMA table_info({table})` and issues `ALTER TABLE … ADD COLUMN` only when the named column is absent. This is necessary because SQLite does not support `ALTER TABLE … ADD COLUMN IF NOT EXISTS`. The helper is idempotent: calling it on a database that already has the column is a no-op.
+
+**Invariant:** No module other than `db.py` contains DDL. If you need to add a table, column, or index, it goes here. New columns on existing tables require a `_add_column_if_missing()` call in `bootstrap_schema`, not a separate migration script.
 
 ---
 
@@ -237,6 +240,8 @@ The scheduler is started as part of the FastAPI lifespan and shut down cleanly o
 **Owns:** The HTTP layer — middleware, route definitions, and response models.
 
 ```python
+_synthesis_in_progress: set[str]  # module-level; tracks in-flight article IDs
+
 class LocalhostOnlyMiddleware(BaseHTTPMiddleware): ...
 
 class SectionOut(BaseModel): ...
@@ -244,16 +249,27 @@ class ArticleSummaryOut(BaseModel): ...
 class ArticleDetailOut(ArticleSummaryOut): ...
 class PaginatedArticles(BaseModel): ...
 class TopicOut(BaseModel): ...
+class AudioStatusOut(BaseModel): ...  # cached, url, duration_sec, pending
 
 def create_app() -> FastAPI: ...
 app: FastAPI  # module-level instance
 ```
 
-`create_app()` wires up `LocalhostOnlyMiddleware`, mounts the static file directory, and sets the lifespan context (which bootstraps the schema on startup).
+`create_app()` wires up `LocalhostOnlyMiddleware`, mounts the `/static` file directory, ensures `settings.audio_cache_dir` exists, mounts the audio cache directory under `/audio`, and sets the lifespan context (which bootstraps the schema on startup).
 
 All routes are thin: validate inputs, run a parameterised query via the `ConnDep` dependency, return a Pydantic model. No business logic lives in routes.
 
 The `ConnDep` dependency (`Annotated[sqlite3.Connection, Depends(get_conn)]`) opens a connection at the start of each request and closes it in a `finally` block, regardless of whether the request succeeded.
+
+**Audio routes:**
+
+| Route | What it does |
+|-------|-------------|
+| `POST /api/articles/{id}/audio` | Checks `_synthesis_in_progress` and `audio_cache`, then dispatches `synthesize_article()` to a thread-pool executor (fire-and-forget); returns `202` immediately |
+| `GET /api/articles/{id}/audio/status` | Returns `AudioStatusOut` — cache state, stream URL, duration, and pending flag — without triggering synthesis |
+| `GET /api/articles/{id}/audio/stream` | Serves the cached MP3 via `FileResponse`; updates `audio_cache.last_played_at` and sets `reading_state.status = 'listened'` |
+
+`_synthesis_in_progress` is a plain Python `set[str]` at module level. It is guarded by the GIL, which is sufficient for a single-process server. The set resets on server restart; any interrupted synthesis is simply re-triggered by the user.
 
 ---
 
@@ -330,7 +346,13 @@ const VALID_STATUSES = new Set(['unread', 'queued', 'listened']);
 | `escapeHtml` | `(value) → string` | Encodes `&`, `<`, `>`, `"`, `'` as HTML entities. Applied to every API-sourced string before injection into `innerHTML`. |
 | `loadSections` | `async () → void` | Fetches `/api/sections`, renders `<li><button data-section="{slug}">` items with unread badge counts into `#section-list`. Section click sets `currentSection` and calls `loadArticles(true)`. |
 | `loadArticles` | `async (reset = true) → void` | Guarded by `isLoadingArticles` (drops concurrent calls) and `hasMoreArticles` (stops requesting once the last page is received). Fetches `/api/articles` with current filter params. `reset = true` clears `#article-list`, resets `currentOffset`, and restores `hasMoreArticles`. Appends article cards and advances `currentOffset` by the actual item count returned. |
-| `loadArticleDetail` | `async (articleId) → void` | Fetches `/api/articles/{id}`, renders title, byline, "Open in Quanta ↗" link, `#audio-player-section` slot, and prose body (`body_text` split on `\n\n`, each paragraph HTML-escaped) into `#article-detail`. Calls `history.pushState`. |
+| `loadArticleDetail` | `async (articleId) → void` | Fetches `/api/articles/{id}`, renders title, byline, "Open in Quanta ↗" link, `#audio-player-section` slot, and prose body into `#article-detail`. Then fetches `/audio/status` and calls `renderAudioSection`. Calls `history.pushState`. |
+| `renderAudioSection` | `(articleId, statusData, article) → void` | Dispatches to `buildAudioPlayer` (if cached), a Quanta-narration player with label (if `article.quanta_audio_url` is set), or `buildGenerateButton`. Writes into `#audio-player-section`. |
+| `buildAudioPlayer` | `(src, durationSec) → string` | Returns `<audio controls src="…">` HTML with an optional `"M:SS"` duration label. All values are passed through `escapeHtml`. |
+| `buildGenerateButton` | `(articleId, pending) → string` | Returns an animated spinner paragraph when `pending` is true, or a `<button class="btn-generate" onclick="requestAudio(…)">` otherwise. |
+| `formatDuration` | `(seconds) → string` | Converts a duration in seconds to `"M:SS"` display format. |
+| `requestAudio` | `async (articleId) → void` | Posts to `/api/articles/{id}/audio`. If the response is `"ready"`, re-fetches status and calls `renderAudioSection`. If `"pending"`, calls `pollAudioStatus(articleId, 0)`. |
+| `pollAudioStatus` | `(articleId, attempt) → void` | Retries every 2 seconds. Stops and renders the player when `cached` is true. After 60 attempts (120 seconds), shows an error toast and restores the generate button. |
 | `showToast` | `(message, type) → void` | Creates a coloured `<div>` (red for `"error"`, green for `"success"`, blue for `"info"`) in `#toast-container`. Auto-removes after 4000 ms via `setTimeout`. |
 | `triggerRefresh` | `async () → void` | Posts to `/api/refresh`, shows a success or error toast, then reloads sections and articles. |
 
@@ -364,3 +386,4 @@ Custom component styles that extend Tailwind's utility classes. These classes ar
 | `.status-listened` | Green pill (`#dcfce7` / `#166534`) |
 | `#toast-container` | `position: fixed`, top-right corner, `z-index: 9999`, flex column with gap |
 | `.quanta-link` | Bold, underlined, blue (`#2563eb`) "Open in Quanta ↗" anchor |
+| `.btn-generate` | Blue (`#2563eb`) pill button for the "Listen with Voce" CTA; hover darkens to `#1d4ed8` |
