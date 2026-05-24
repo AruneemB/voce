@@ -12,6 +12,7 @@ Voce exposes a JSON API served by FastAPI on `http://127.0.0.1:8765` by default.
 | `GET /api/articles/{id}` | Implemented | 5 |
 | `GET /api/topics` | Implemented | 5 |
 | `POST /api/refresh` | Implemented | 5 |
+| `GET /api/status` | Implemented | — |
 | `GET /api/articles/{id}/topics` | Planned | — |
 | `GET /api/search` | Implemented | 10 |
 | `GET /api/queue` | Implemented | 9 |
@@ -436,6 +437,8 @@ Serves the cached MP3 file via `FileResponse`. Also updates `audio_cache.last_pl
 
 Triggers an immediate feed refresh for all four Quanta Magazine sections. This is the same operation the background scheduler runs on its configured interval.
 
+After the feed refresh completes, article enrichment is started as an async background task: any article whose `body_text` is still empty is fetched and cleaned. The endpoint returns before enrichment finishes; poll `GET /api/status` to track progress.
+
 **Response** — `200 OK`
 
 ```json
@@ -448,6 +451,30 @@ Triggers an immediate feed refresh for all four Quanta Magazine sections. This i
 ```
 
 Each value is a two-element array: `[inserted, skipped]`. Articles already in the database are skipped (not re-inserted); new articles are inserted.
+
+---
+
+### `GET /api/status`
+
+Returns a lightweight diagnostic snapshot of the article corpus. Useful for confirming that the feed-refresh and enrichment pipeline has run successfully without inspecting the database directly.
+
+**Response** — `200 OK`
+
+```json
+{
+  "total_articles": 42,
+  "enriched": 38,
+  "pending_enrichment": 4
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `total_articles` | integer | Total number of articles currently in the database |
+| `enriched` | integer | Articles whose `body_text` column is non-empty (HTML has been fetched and cleaned) |
+| `pending_enrichment` | integer | Articles still awaiting enrichment (`total_articles − enriched`) |
+
+`pending_enrichment > 0` immediately after startup or after `POST /api/refresh` is normal: enrichment runs asynchronously and may still be in progress. The count should reach zero within a few minutes on a typical connection.
 
 ---
 
