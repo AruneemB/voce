@@ -149,3 +149,27 @@ def test_get_cache_stats_with_entries(mem_conn):
     assert stats["total_files"] == 2
     assert stats["oldest_played_at"] == "2024-01-01T00:00:00Z"
     assert stats["newest_played_at"] == "2024-06-01T00:00:00Z"
+
+
+def test_get_cache_stats_single_entry_oldest_equals_newest(mem_conn):
+    _insert_cache_row(mem_conn, "art1", "/tmp/art1.mp3", "2024-06-15T12:00:00Z")
+    stats = get_cache_stats(mem_conn)
+    assert stats["total_files"] == 1
+    assert stats["oldest_played_at"] == "2024-06-15T12:00:00Z"
+    assert stats["newest_played_at"] == "2024-06-15T12:00:00Z"
+
+
+def test_get_cache_stats_reflects_state_after_sweep(mem_conn, tmp_path):
+    mp3_old = tmp_path / "art1.mp3"
+    mp3_old.write_bytes(b"old")
+    mp3_new = tmp_path / "art2.mp3"
+    mp3_new.write_bytes(b"new")
+    _insert_cache_row(mem_conn, "art1", str(mp3_old), "2000-01-01T00:00:00Z")
+    _insert_cache_row(mem_conn, "art2", str(mp3_new), "2099-01-01T00:00:00Z")
+
+    sweep_expired_cache(mem_conn, ttl_days=1)
+    stats = get_cache_stats(mem_conn)
+
+    assert stats["total_files"] == 1
+    assert stats["oldest_played_at"] == "2099-01-01T00:00:00Z"
+    assert stats["newest_played_at"] == "2099-01-01T00:00:00Z"
