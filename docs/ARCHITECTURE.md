@@ -142,7 +142,7 @@ The `last_played_at` field in `audio_cache` is updated on every cache hit. `swee
 
 Both jobs open and close their own connections independently to avoid cross-thread connection sharing. Errors are caught and logged so that one job failure does not affect the other.
 
-The scheduler is started in the FastAPI `lifespan` context manager immediately after schema bootstrap. An additional daemon thread triggers an immediate `refresh_all_feeds()` call followed by `enrich_all_unenriched()` on startup so that the database is fully populated (with body text) before the first user request arrives, without waiting for the first interval tick. The lifespan teardown calls `scheduler.shutdown(wait=False)`.
+The scheduler is started in the FastAPI `lifespan` context manager immediately after schema bootstrap. An additional daemon thread kicks off an immediate `refresh_all_feeds()` call followed by `enrich_all_unenriched()` at startup so that enrichment begins as early as possible, without waiting for the first interval tick. Because this runs in a daemon thread it does not block server startup; articles are enriched in the background while the server is already accepting requests. The lifespan teardown calls `scheduler.shutdown(wait=False)`.
 
 ### API layer — `api.py`
 
