@@ -510,9 +510,13 @@ async def refresh(conn: ConnDep) -> dict:
     results = await loop.run_in_executor(None, refresh_all_feeds, conn)
 
     async def _enrich() -> None:
-        with httpx.Client(verify=certifi.where(), follow_redirects=True) as client:
-            ok, fail = await loop.run_in_executor(None, enrich_all_unenriched, conn, client)
-            logger.info("Manual refresh enrichment: {} ok, {} failed", ok, fail)
+        task_conn = get_connection()
+        try:
+            with httpx.Client(verify=certifi.where(), follow_redirects=True) as client:
+                ok, fail = await loop.run_in_executor(None, enrich_all_unenriched, task_conn, client)
+                logger.info("Manual refresh enrichment: {} ok, {} failed", ok, fail)
+        finally:
+            task_conn.close()
 
     asyncio.create_task(_enrich())
     return {slug: list(counts) for slug, counts in results.items()}
