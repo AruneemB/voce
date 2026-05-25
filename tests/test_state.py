@@ -162,15 +162,16 @@ def test_queue_ordering_by_updated_at(client_two_articles):
 def test_refresh_job_calls_enrichment_after_feed_refresh():
     """_refresh_job must invoke enrich_all_unenriched after refresh_all_feeds.
 
-    This pins the enrichment wiring so that a future refactor of the
-    scheduler cannot accidentally drop the enrichment step without the
-    test suite catching it.
+    Asserts call order and that both functions receive the same (conn, client)
+    pair, pinning the enrichment wiring against future scheduler refactors.
     """
     from unittest.mock import MagicMock, patch
     from voce.scheduler import _refresh_job
 
     mock_conn = MagicMock()
     conn_factory = MagicMock(return_value=mock_conn)
+
+    seq: list = []
 
     with patch("voce.scheduler.refresh_all_feeds") as mock_refresh, \
          patch("voce.scheduler.enrich_all_unenriched") as mock_enrich, \
@@ -182,10 +183,25 @@ def test_refresh_job_calls_enrichment_after_feed_refresh():
         ctx.__exit__ = MagicMock(return_value=False)
         mock_client_cls.return_value = ctx
 
+        def _record_refresh(*a, **k):
+            seq.append(("refresh", a, k))
+            return {}
+
+        def _record_enrich(*a, **k):
+            seq.append(("enrich", a, k))
+            return (0, 0)
+
+        mock_refresh.side_effect = _record_refresh
+        mock_enrich.side_effect = _record_enrich
+
         _refresh_job(conn_factory)
 
-    mock_refresh.assert_called_once()
-    mock_enrich.assert_called_once()
+    assert len(seq) == 2
+    assert seq[0][0] == "refresh"
+    assert seq[1][0] == "enrich"
+    # refresh_all_feeds receives only conn; enrich_all_unenriched receives conn + client
+    assert seq[0][1] == (mock_conn,), "refresh must receive (conn,)"
+    assert seq[1][1] == (mock_conn, ctx), "enrich must receive (conn, client)"
 
 
 def test_refresh_job_enrichment_uses_certifi():
