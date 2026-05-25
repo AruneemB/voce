@@ -159,6 +159,74 @@ def test_queue_ordering_by_updated_at(client_two_articles):
     assert ids[1] == "art1"
 
 
+def test_refresh_job_calls_enrichment_after_feed_refresh():
+    """_refresh_job must invoke enrich_all_unenriched after refresh_all_feeds.
+
+    Asserts call order and that both functions receive the same (conn, client)
+    pair, pinning the enrichment wiring against future scheduler refactors.
+    """
+    from unittest.mock import MagicMock, patch
+    from voce.scheduler import _refresh_job
+
+    mock_conn = MagicMock()
+    conn_factory = MagicMock(return_value=mock_conn)
+
+    seq: list = []
+
+    with patch("voce.scheduler.refresh_all_feeds") as mock_refresh, \
+         patch("voce.scheduler.enrich_all_unenriched") as mock_enrich, \
+         patch("voce.scheduler.httpx.Client") as mock_client_cls:
+        mock_refresh.return_value = {}
+        mock_enrich.return_value = (0, 0)
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=ctx)
+        ctx.__exit__ = MagicMock(return_value=False)
+        mock_client_cls.return_value = ctx
+
+        def _record_refresh(*a, **k):
+            seq.append(("refresh", a, k))
+            return {}
+
+        def _record_enrich(*a, **k):
+            seq.append(("enrich", a, k))
+            return (0, 0)
+
+        mock_refresh.side_effect = _record_refresh
+        mock_enrich.side_effect = _record_enrich
+
+        _refresh_job(conn_factory)
+
+    assert len(seq) == 2
+    assert seq[0][0] == "refresh"
+    assert seq[1][0] == "enrich"
+    # refresh_all_feeds receives only conn; enrich_all_unenriched receives conn + client
+    assert seq[0][1] == (mock_conn,), "refresh must receive (conn,)"
+    assert seq[1][1] == (mock_conn, ctx), "enrich must receive (conn, client)"
+
+
+def test_refresh_job_enrichment_uses_certifi():
+    """_refresh_job must pass certifi.where() to its httpx.Client."""
+    import certifi
+    from unittest.mock import MagicMock, patch
+    from voce.scheduler import _refresh_job
+
+    conn_factory = MagicMock(return_value=MagicMock())
+
+    with patch("voce.scheduler.refresh_all_feeds", return_value={}), \
+         patch("voce.scheduler.enrich_all_unenriched", return_value=(0, 0)), \
+         patch("voce.scheduler.httpx.Client") as mock_client_cls:
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=ctx)
+        ctx.__exit__ = MagicMock(return_value=False)
+        mock_client_cls.return_value = ctx
+
+        _refresh_job(conn_factory)
+
+    kwargs = mock_client_cls.call_args.kwargs
+    assert kwargs.get("verify") == certifi.where()
+    assert kwargs.get("follow_redirects") is True
+
+
 def test_scheduler_feed_refresh_job_config():
     from voce.config import settings
     from voce.scheduler import build_scheduler

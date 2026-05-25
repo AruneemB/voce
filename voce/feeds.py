@@ -5,6 +5,7 @@ import sqlite3
 import time
 from datetime import datetime
 
+import certifi
 import feedparser
 import httpx
 from loguru import logger
@@ -123,7 +124,7 @@ def upsert_articles(
 def refresh_all_feeds(conn: sqlite3.Connection) -> dict[str, tuple[int, int]]:
     """Fetch, parse, and upsert all Quanta Magazine feeds; return per-slug counts."""
     results: dict[str, tuple[int, int]] = {}
-    with httpx.Client(headers={"User-Agent": _USER_AGENT}, timeout=_TIMEOUT_SEC) as client:
+    with httpx.Client(headers={"User-Agent": _USER_AGENT}, timeout=_TIMEOUT_SEC, verify=certifi.where(), follow_redirects=True) as client:
         for slug, url in QUANTA_FEEDS.items():
             try:
                 parsed = fetch_feed(slug, url, client)

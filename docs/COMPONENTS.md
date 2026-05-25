@@ -146,6 +146,8 @@ def refresh_all_feeds(conn: sqlite3.Connection) -> dict[str, tuple[int, int]]: .
 
 `refresh_all_feeds()` orchestrates the full pipeline and returns per-section `(inserted, skipped)` counts. Failures in one section do not abort the remaining sections.
 
+The `httpx.Client` used by `refresh_all_feeds()` is constructed with `verify=certifi.where()` and `follow_redirects=True`. `certifi` is patched at runtime by `pip-system-certs` to return the OS-native certificate bundle, ensuring reliable TLS on Windows. `follow_redirects=True` is required because the Quanta Magazine feed URLs issue 301 redirects that httpx ≥ 0.20 does not follow by default.
+
 ---
 
 ## `article.py` — HTML enrichment and text cleaning
@@ -164,11 +166,15 @@ def enrich_all_unenriched(conn, client) -> tuple[int, int]: ...
 
 `clean_html_for_tts()` runs a ten-step pipeline: remove noise elements, replace `<br>` with newlines, convert headings, handle blockquotes, convert lists to natural language, strip remaining tags, apply LaTeX substitutions, normalise whitespace.
 
+When iterating all remaining tags to filter by CSS class, the function guards against nodes whose `attrs` attribute is `None` (a real case with lxml when parsing complex pages containing CDATA sections or processing instructions). Such nodes are skipped rather than triggering an `AttributeError` on `tag.get("class")`.
+
 `apply_latex_substitutions()` applies a sequence of regex replacements in order. Structural conversions (fractions, roots, superscripts) run first; Greek letter and symbol expansions run second; catch-all strippers for remaining LaTeX syntax run last.
 
 `build_preamble()` returns `"From Quanta Magazine. {title}. By {author}. Published {date}."`. This attribution preamble is prepended to every narration.
 
 `enrich_article()` checks whether `body_html` is already populated. If not, it fetches the article page directly before cleaning. Either way, the cleaned text and preamble are written back to `articles.body_text`.
+
+`enrich_all_unenriched()` is the batch entry point: it selects all articles where `body_text` is empty or null, calls `enrich_article()` for each, commits once at the end, and returns `(success_count, failure_count)`. It is called automatically after every feed refresh — from the startup daemon thread, the scheduled `_refresh_job`, and the `POST /api/refresh` endpoint.
 
 ---
 

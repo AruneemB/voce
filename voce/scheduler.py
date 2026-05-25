@@ -3,9 +3,12 @@
 import sqlite3
 from typing import Callable
 
+import certifi
+import httpx
 from apscheduler.schedulers.background import BackgroundScheduler
 from loguru import logger
 
+from voce.article import enrich_all_unenriched
 from voce.cache import sweep_expired_cache
 from voce.config import settings
 from voce.feeds import refresh_all_feeds
@@ -17,8 +20,11 @@ def _refresh_job(conn_factory: Callable[[], sqlite3.Connection]) -> None:
         conn = conn_factory()
         results = refresh_all_feeds(conn)
         logger.info(f"Scheduled feed refresh complete: {results}")
+        with httpx.Client(verify=certifi.where(), follow_redirects=True) as client:
+            ok, fail = enrich_all_unenriched(conn, client)
+            logger.info(f"Scheduled enrichment: {ok} ok, {fail} failed")
     except Exception as exc:
-        logger.error(f"Scheduled feed refresh failed: {exc}")
+        logger.error(f"Scheduled refresh/enrich failed: {exc}")
     finally:
         if conn is not None:
             conn.close()
